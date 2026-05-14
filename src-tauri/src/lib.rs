@@ -114,6 +114,13 @@ enum RulePatternType {
     Regex,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ThemePreference {
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct BrowserConfig {
@@ -168,11 +175,17 @@ struct AppConfig {
     always_show_picker: bool,
     use_defaults_when_not_running: bool,
     disable_transparency: bool,
+    #[serde(default = "default_theme_preference")]
+    theme_preference: ThemePreference,
     #[serde(default)]
     onboarding_completed: bool,
     default_browser_id: Option<String>,
     browsers: Vec<BrowserConfig>,
     rules: Vec<RuleConfig>,
+}
+
+fn default_theme_preference() -> ThemePreference {
+    ThemePreference::Light
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,6 +249,7 @@ struct PickerSession {
     reason: String,
     source: PickerLaunchSource,
     disable_transparency: bool,
+    theme_preference: ThemePreference,
     always_show_picker: bool,
     alt_pressed: bool,
     browsers: Vec<PickerBrowserEntry>,
@@ -734,6 +748,7 @@ fn default_config() -> AppConfig {
         always_show_picker: false,
         use_defaults_when_not_running: false,
         disable_transparency: false,
+        theme_preference: default_theme_preference(),
         onboarding_completed: false,
         default_browser_id: None,
         browsers: Vec::new(),
@@ -1055,7 +1070,7 @@ fn resolve_browser_metadata(
                 .private_flag_override
                 .map(str::to_string)
                 .or_else(|| default_private_flag_for_family(definition.family)),
-            };
+        };
     }
 
     if let Some(definition) = known_browser_definitions().iter().find(|definition| {
@@ -1800,6 +1815,7 @@ fn build_picker_session(
         reason: reason.to_string(),
         source,
         disable_transparency: config.disable_transparency,
+        theme_preference: config.theme_preference,
         always_show_picker: config.always_show_picker,
         alt_pressed: is_alt_pressed(),
         browsers,
@@ -2031,9 +2047,12 @@ mod tests {
         build_detected_browser, hydrate_detected_browser_defaults, merge_detected_browsers,
         reset_config_with_detected_browsers, resolve_browser_metadata, rule_matches,
         write_config_file, AppConfig, BrowserConfig, BrowserFamily, BrowserSource, RuleConfig,
-        RulePatternType,
+        RulePatternType, ThemePreference,
     };
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     #[cfg(target_os = "windows")]
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
@@ -2054,6 +2073,7 @@ mod tests {
             always_show_picker: false,
             use_defaults_when_not_running: false,
             disable_transparency: false,
+            theme_preference: ThemePreference::Light,
             onboarding_completed: true,
             default_browser_id: None,
             browsers,
@@ -2259,17 +2279,17 @@ mod tests {
     fn reset_config_restores_defaults_and_keeps_only_detected_browsers() {
         let config = reset_config_with_detected_browsers(
             vec![
-            build_detected_browser(
-                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-                Some("Google Chrome"),
-                None,
-            ),
-            build_detected_browser(
-                "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
-                Some("Mozilla Firefox"),
-                None,
-            ),
-        ],
+                build_detected_browser(
+                    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                    Some("Google Chrome"),
+                    None,
+                ),
+                build_detected_browser(
+                    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+                    Some("Mozilla Firefox"),
+                    None,
+                ),
+            ],
             true,
         );
 
@@ -2277,6 +2297,7 @@ mod tests {
         assert!(!config.always_show_picker);
         assert!(!config.use_defaults_when_not_running);
         assert!(!config.disable_transparency);
+        assert_eq!(config.theme_preference, ThemePreference::Light);
         assert!(config.onboarding_completed);
         assert_eq!(config.default_browser_id, None);
         assert!(config.rules.is_empty());
