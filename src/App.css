@@ -243,6 +243,15 @@ select {
   margin-top: 0;
 }
 
+.action-panel {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(22, 39, 64, 0.12);
+  background: rgba(235, 242, 250, 0.75);
+}
+
 .inline-save-state {
   margin-top: -0.1rem;
 }

@@ -7,6 +7,7 @@ import {
   previewRouteWithConfig,
   registerHopsAsBrowser,
   refreshBrowsers,
+  resetConfig,
   routeAndOpenWithConfig,
   saveConfig,
   showPickerForUrl,
@@ -48,6 +49,8 @@ interface StatusState {
   kind: "idle" | "success" | "error" | "warning";
   text: string;
 }
+
+type SettingsActionPanel = "none" | "reset" | "rerun-onboarding";
 
 const EMPTY_STATUS: StatusState = { kind: "idle", text: "" };
 
@@ -235,6 +238,20 @@ function settingsDraftFromConfig(config: AppConfig): SettingsDraft {
   };
 }
 
+function applySettingsDraft(config: AppConfig, settingsDraft: SettingsDraft | null): AppConfig {
+  if (!settingsDraft) {
+    return config;
+  }
+
+  return {
+    ...config,
+    alwaysShowPicker: settingsDraft.alwaysShowPicker,
+    useDefaultsWhenNotRunning: settingsDraft.useDefaultsWhenNotRunning,
+    disableTransparency: settingsDraft.disableTransparency,
+    defaultBrowserId: settingsDraft.defaultBrowserId || null,
+  };
+}
+
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
@@ -243,6 +260,8 @@ function App() {
   const [saveActivityCount, setSaveActivityCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [isResettingConfig, setIsResettingConfig] = useState(false);
+  const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
   const [runningBrowserIds, setRunningBrowserIds] = useState<Set<string>>(new Set());
   const [registrationStatus, setRegistrationStatus] = useState<BrowserRegistrationStatus | null>(null);
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -253,6 +272,7 @@ function App() {
   const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(new Set());
   const [savingBrowserIds, setSavingBrowserIds] = useState<Set<string>>(new Set());
   const [failedBrowserIds, setFailedBrowserIds] = useState<Set<string>>(new Set());
+  const [settingsActionPanel, setSettingsActionPanel] = useState<SettingsActionPanel>("none");
 
   const [browserDraft, setBrowserDraft] = useState<BrowserDraft>({
     name: "",
@@ -284,9 +304,7 @@ function App() {
       setIsLoading(true);
       try {
         const loaded = await loadConfig();
-        configRef.current = loaded;
-        setConfig(loaded);
-        setSettingsDraft(settingsDraftFromConfig(loaded));
+        applyLoadedConfig(loaded);
         setStatus({ kind: "success", text: "Configuration loaded." });
 
         const runningIds = await listRunningBrowserIds();
@@ -342,6 +360,14 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!config || config.onboardingCompleted) {
+      return;
+    }
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [config, onboardingStep]);
+
   function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
     let nextConfig: AppConfig | null = null;
 
@@ -356,6 +382,12 @@ function App() {
     });
 
     return nextConfig;
+  }
+
+  function applyLoadedConfig(nextConfig: AppConfig) {
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+    setSettingsDraft(settingsDraftFromConfig(nextConfig));
   }
 
   function persistConfig(
@@ -373,9 +405,7 @@ function App() {
     const runSave = async () => {
       try {
         const saved = await saveConfig(nextConfig);
-        configRef.current = saved;
-        setConfig(saved);
-        setSettingsDraft(settingsDraftFromConfig(saved));
+        applyLoadedConfig(saved);
         options?.onSuccess?.(saved);
         if (options?.successText) {
           setStatus({ kind: "success", text: options.successText });
@@ -522,13 +552,7 @@ function App() {
       return;
     }
 
-    const nextConfig: AppConfig = {
-      ...config,
-      alwaysShowPicker: settingsDraft.alwaysShowPicker,
-      useDefaultsWhenNotRunning: settingsDraft.useDefaultsWhenNotRunning,
-      disableTransparency: settingsDraft.disableTransparency,
-      defaultBrowserId: settingsDraft.defaultBrowserId || null,
-    };
+    const nextConfig = applySettingsDraft(config, settingsDraft);
 
     await persistConfig(nextConfig, {
       successText: "Settings saved.",
@@ -558,7 +582,7 @@ function App() {
     setIsRefreshing(true);
     try {
       const refreshed = await refreshBrowsers();
-      setConfig(refreshed);
+      applyLoadedConfig(refreshed);
       setStatus({ kind: "success", text: "Browser detection refreshed." });
       await refreshRunningState();
     } catch (error) {
@@ -875,7 +899,7 @@ function App() {
     setIsFinishingOnboarding(true);
     try {
       const saved = await saveConfig(nextConfig);
-      setConfig(saved);
+      applyLoadedConfig(saved);
       setStatus({
         kind: "success",
         text: "Onboarding completed. Hops will now start minimized to tray.",
@@ -885,6 +909,67 @@ function App() {
       setStatus({ kind: "error", text: `Could not finish onboarding: ${message}` });
     } finally {
       setIsFinishingOnboarding(false);
+    }
+  }
+
+  async function handleResetConfig() {
+    setIsResettingConfig(true);
+    try {
+      const reset = await resetConfig();
+      setSettingsActionPanel("none");
+      applyLoadedConfig(reset);
+      setDirtyRuleIds(new Set());
+      setSavingRuleIds(new Set());
+      setPendingBrowserIds(new Set());
+      setSavingBrowserIds(new Set());
+      setFailedBrowserIds(new Set());
+      setRouteDecision(null);
+      setBrowserDraft({ name: "", path: "", privateFlag: "" });
+      setStatus({
+        kind: "success",
+        text: "Configuration reset. Rules and manual browsers were cleared, and detected browsers were restored.",
+      });
+      await refreshRunningState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({ kind: "error", text: `Could not reset configuration: ${message}` });
+    } finally {
+      setIsResettingConfig(false);
+    }
+  }
+
+  async function handleRerunOnboarding(shouldResetFirst: boolean) {
+    if (!config) {
+      return;
+    }
+
+    setIsStartingOnboarding(true);
+    try {
+      const nextConfig = shouldResetFirst
+        ? await saveConfig({
+            ...(await resetConfig()),
+            onboardingCompleted: false,
+          })
+        : await saveConfig({
+            ...applySettingsDraft(config, settingsDraft),
+            onboardingCompleted: false,
+          });
+
+      setOnboardingStep(0);
+      setSettingsActionPanel("none");
+      applyLoadedConfig(nextConfig);
+      setStatus({
+        kind: "success",
+        text: shouldResetFirst
+          ? "Configuration reset. Onboarding restarted from step 1."
+          : "Onboarding restarted with your current configuration intact.",
+      });
+      await refreshRunningState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({ kind: "error", text: `Could not restart onboarding: ${message}` });
+    } finally {
+      setIsStartingOnboarding(false);
     }
   }
 
@@ -1295,6 +1380,94 @@ function App() {
               </button>
               {hasUnsavedSettings ? <p className="setting-help">You have unsaved settings changes.</p> : null}
             </div>
+
+            <article className="card">
+              <h3>Configuration Recovery</h3>
+              <p className="setting-help">
+                Reset clears your rules, fallback browser choice, toggles, and manual browser entries. Detected
+                browsers are scanned again immediately. It does not reopen onboarding.
+              </p>
+
+              <div className="inline-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    setSettingsActionPanel((current) => (current === "reset" ? "none" : "reset"))
+                  }
+                  disabled={isResettingConfig || isStartingOnboarding}
+                >
+                  Reset config
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    setSettingsActionPanel((current) =>
+                      current === "rerun-onboarding" ? "none" : "rerun-onboarding",
+                    )
+                  }
+                  disabled={isResettingConfig || isStartingOnboarding}
+                >
+                  Rerun onboarding
+                </button>
+              </div>
+
+              {settingsActionPanel === "reset" ? (
+                <div className="action-panel">
+                  <p className="setting-help">
+                    This removes your current routing rules and manual browsers and restores defaults without
+                    reopening onboarding.
+                  </p>
+                  <div className="inline-actions">
+                    <button type="button" onClick={() => void handleResetConfig()} disabled={isResettingConfig}>
+                      {isResettingConfig ? "Resetting..." : "Confirm reset"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setSettingsActionPanel("none")}
+                      disabled={isResettingConfig}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {settingsActionPanel === "rerun-onboarding" ? (
+                <div className="action-panel">
+                  <p className="setting-help">
+                    Choose whether onboarding should reuse your current configuration or start from a fresh reset.
+                  </p>
+                  <div className="inline-actions">
+                    <button
+                      type="button"
+                      onClick={() => void handleRerunOnboarding(false)}
+                      disabled={isStartingOnboarding}
+                    >
+                      {isStartingOnboarding ? "Starting..." : "Keep current config"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => void handleRerunOnboarding(true)}
+                      disabled={isStartingOnboarding || isResettingConfig}
+                    >
+                      Reset first
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setSettingsActionPanel("none")}
+                      disabled={isStartingOnboarding}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </article>
 
             <div className="inline-actions">
               <button type="button" className="secondary" onClick={openDefaultAppsSettings}>

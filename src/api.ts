@@ -19,6 +19,10 @@ export function refreshBrowsers(): Promise<AppConfig> {
   return invoke<AppConfig>("refresh_browsers");
 }
 
+export function resetConfig(): Promise<AppConfig> {
+  return invoke<AppConfig>("reset_config");
+}
+
 export function listRunningBrowserIds(): Promise<string[]> {
   return invoke<string[]>("list_running_browser_ids");
 }
