@@ -1027,10 +1027,27 @@ fn resolve_browser_metadata(
 ) -> ResolvedBrowserMetadata {
     let exe_name = executable_name_from_path(path).unwrap_or_else(|| "browser".to_string());
     let exe_name = exe_name.to_lowercase();
+    let normalized_path = normalize_path(path);
 
     if let Some(definition) =
         display_name_hint.and_then(find_known_browser_definition_by_display_name)
     {
+        return ResolvedBrowserMetadata {
+            name: definition.display_name.to_string(),
+            family: definition.family,
+            private_flag: definition
+                .private_flag_override
+                .map(str::to_string)
+                .or_else(|| default_private_flag_for_family(definition.family)),
+            };
+    }
+
+    if let Some(definition) = known_browser_definitions().iter().find(|definition| {
+        definition
+            .known_install_path_suffixes
+            .iter()
+            .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
+    }) {
         return ResolvedBrowserMetadata {
             name: definition.display_name.to_string(),
             family: definition.family,
