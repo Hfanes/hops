@@ -60,6 +60,7 @@ Note: picker UI is not fully implemented yet. When picker would be needed, Setti
 ## Windows Registry Keys Touched
 
 When clicking `Register Hops`, the app writes:
+HKCU - HKEY_CURRENT_USER
 
 - `HKCU\Software\Classes\HopsURL`
 - `HKCU\Software\Classes\HopsHTML`
