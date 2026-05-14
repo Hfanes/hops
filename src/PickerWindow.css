@@ -38,6 +38,15 @@ body.picker-body {
   overflow: hidden;
 }
 
+:root.dark .picker-menu {
+  --picker-bg: #233038;
+  --picker-card: #2a3840;
+  --picker-text: #fdf6e3;
+  --picker-muted: #d3dbdd;
+  --picker-border: #d3dbdd;
+  --picker-shadow: #10191d;
+}
+
 .picker-menu.solid {
   background: var(--picker-bg);
 }
@@ -132,7 +141,7 @@ body.picker-body {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 10px 6px 0;
+  padding: 0 4px 6px 0;
   scrollbar-gutter: stable;
 }
 
@@ -160,7 +169,7 @@ body.picker-body {
   gap: 10px;
   border: 1px solid var(--picker-border);
   border-radius: 0;
-  background: var(--picker-card);
+  background: var(--picker-secondary);
   color: #233038;
   cursor: pointer;
   font: inherit;
@@ -186,7 +195,7 @@ body.picker-body {
 
 .picker-menu-item.private-mode {
   border-color: var(--picker-shadow);
-  background: var(--picker-accent);
+  background: var(--picker-secondary);
 }
 
 .picker-menu-item:disabled {

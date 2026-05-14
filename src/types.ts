@@ -81,6 +81,7 @@ export interface PickerSession {
   reason: string;
   source: PickerLaunchSource;
   disableTransparency: boolean;
+  themePreference: ThemePreference;
   alwaysShowPicker: boolean;
   altPressed: boolean;
   browsers: PickerBrowserEntry[];

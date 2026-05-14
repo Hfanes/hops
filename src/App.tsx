@@ -1182,7 +1182,7 @@ function App() {
   }
 
   const shellClassName = "min-h-screen bg-[var(--h-bg)] p-0 md:p-3.5";
-  const panelClassName = `grid min-h-screen overflow-hidden border border-[var(--h-border)] bg-[var(--h-card)] shadow-none md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)] ${
+  const panelClassName = `grid min-h-screen overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)] ${
     isSidebarCollapsed
       ? "grid-cols-[54px_minmax(0,1fr)]"
       : "grid-cols-[168px_minmax(0,1fr)]"
@@ -1301,7 +1301,7 @@ function App() {
   if (isLoading) {
     return (
       <main className={shellClassName}>
-        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-card)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
+        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
           <h1>Hops</h1>
           <p>Loading configuration...</p>
         </section>
@@ -1312,7 +1312,7 @@ function App() {
   if (!config) {
     return (
       <main className={shellClassName}>
-        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-card)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
+        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
           <h1>Hops</h1>
           <p>
             Could not load configuration. Check the status banner and try again.

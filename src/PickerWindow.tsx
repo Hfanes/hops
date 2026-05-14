@@ -2,13 +2,17 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiCheck, FiExternalLink, FiLock, FiZap } from "react-icons/fi";
 import { getPickerState, hidePickerWindow, openUrl } from "./api";
-import type { PickerSession } from "./types";
+import type { PickerSession, ThemePreference } from "./types";
 import "./PickerWindow.css";
 
 const PICKER_SESSION_EVENT = "picker-session";
 
 function supportsPrivateMode(privateFlag: string | null) {
   return !!privateFlag?.trim();
+}
+
+function applyPickerTheme(themePreference: ThemePreference) {
+  document.documentElement.classList.toggle("dark", themePreference === "dark");
 }
 
 function PickerWindow() {
@@ -33,6 +37,7 @@ function PickerWindow() {
       setSession(next);
       setStatusText("");
       setIsAltPressed(next.altPressed);
+      applyPickerTheme(next.themePreference);
     };
 
     const registerUnlistener = (unlisten: () => void) => {
