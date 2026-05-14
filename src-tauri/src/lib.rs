@@ -265,6 +265,12 @@ fn refresh_browsers(app: AppHandle) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+fn reset_config(app: AppHandle) -> Result<AppConfig, String> {
+    let config = reset_config_with_detected_browsers(detect_browsers(), true);
+    save_config_internal(&app, config, false)
+}
+
+#[tauri::command]
 fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, String> {
     let config = load_or_init_config(&app, false)?;
     let running = running_processes()?;
@@ -733,6 +739,16 @@ fn default_config() -> AppConfig {
         browsers: Vec::new(),
         rules: Vec::new(),
     }
+}
+
+fn reset_config_with_detected_browsers(
+    detected_browsers: Vec<BrowserConfig>,
+    onboarding_completed: bool,
+) -> AppConfig {
+    let mut config = default_config();
+    config.onboarding_completed = onboarding_completed;
+    merge_detected_browsers(&mut config, detected_browsers);
+    config
 }
 
 fn normalize_config(config: &mut AppConfig) {
@@ -2000,7 +2016,8 @@ pub fn run() {
             open_windows_default_apps,
             get_browser_registration_status,
             register_hops_as_browser,
-            unregister_hops_as_browser
+            unregister_hops_as_browser,
+            reset_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2012,9 +2029,11 @@ mod tests {
     use super::registry_browser_roots;
     use super::{
         build_detected_browser, hydrate_detected_browser_defaults, merge_detected_browsers,
-        resolve_browser_metadata, rule_matches, AppConfig, BrowserConfig, BrowserFamily,
-        BrowserSource, RuleConfig, RulePatternType,
+        reset_config_with_detected_browsers, resolve_browser_metadata, rule_matches,
+        write_config_file, AppConfig, BrowserConfig, BrowserFamily, BrowserSource, RuleConfig,
+        RulePatternType,
     };
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
     #[cfg(target_os = "windows")]
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
@@ -2234,6 +2253,66 @@ mod tests {
             config.browsers[1].private_flag.as_deref(),
             Some("--private-window")
         );
+    }
+
+    #[test]
+    fn reset_config_restores_defaults_and_keeps_only_detected_browsers() {
+        let config = reset_config_with_detected_browsers(
+            vec![
+            build_detected_browser(
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                Some("Google Chrome"),
+                None,
+            ),
+            build_detected_browser(
+                "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+                Some("Mozilla Firefox"),
+                None,
+            ),
+        ],
+            true,
+        );
+
+        assert_eq!(config.version, 1);
+        assert!(!config.always_show_picker);
+        assert!(!config.use_defaults_when_not_running);
+        assert!(!config.disable_transparency);
+        assert!(config.onboarding_completed);
+        assert_eq!(config.default_browser_id, None);
+        assert!(config.rules.is_empty());
+        assert_eq!(config.browsers.len(), 2);
+        assert!(config
+            .browsers
+            .iter()
+            .all(|browser| browser.source == BrowserSource::Detected));
+    }
+
+    #[test]
+    fn reset_config_persists_valid_json() {
+        let config = reset_config_with_detected_browsers(
+            vec![build_detected_browser(
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                Some("Google Chrome"),
+                None,
+            )],
+            true,
+        );
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("hops-reset-config-{unique}.json"));
+
+        write_config_file(&path, &config).expect("reset config should write");
+        let data = fs::read_to_string(&path).expect("reset config file should be readable");
+        let loaded =
+            serde_json::from_str::<AppConfig>(&data).expect("reset config file should parse");
+
+        assert_eq!(loaded.rules.len(), 0);
+        assert_eq!(loaded.default_browser_id, None);
+        assert!(loaded.onboarding_completed);
+
+        let _ = fs::remove_file(path);
     }
 
     #[cfg(target_os = "windows")]
