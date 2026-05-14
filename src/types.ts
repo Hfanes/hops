@@ -10,6 +10,7 @@ export type RulePatternType =
   | "regex";
 
 export type RouteAction = "open_browser" | "show_picker";
+export type ThemePreference = "light" | "dark";
 
 export interface BrowserConfig {
   id: string;
@@ -34,6 +35,7 @@ export interface AppConfig {
   alwaysShowPicker: boolean;
   useDefaultsWhenNotRunning: boolean;
   disableTransparency: boolean;
+  themePreference: ThemePreference;
   onboardingCompleted: boolean;
   defaultBrowserId: string | null;
   browsers: BrowserConfig[];

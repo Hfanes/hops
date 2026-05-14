@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { FiCheck, FiExternalLink, FiLock, FiZap } from "react-icons/fi";
 import { getPickerState, hidePickerWindow, openUrl } from "./api";
 import type { PickerSession } from "./types";
 import "./PickerWindow.css";
@@ -150,14 +151,26 @@ function PickerWindow() {
   return (
     <main className="picker-shell">
       <section className={`picker-menu ${session?.disableTransparency ? "solid" : ""}`}>
+        <div className="picker-brand-row">
+          <span className="picker-brand-mark">H</span>
+          <div className="picker-brand-copy">
+            <p>Hops Picker</p>
+            <span>{session?.source === "manual" ? "Manual launch" : "Route decision"}</span>
+          </div>
+        </div>
+
         {session?.url ? (
           <header className="picker-menu-header" title={session.url}>
+            <span>URL</span>
             {session.url}
           </header>
         ) : null}
 
         {isAltPressed ? (
-          <p className="picker-hint">Alt held: supported browsers will open in private mode.</p>
+          <p className="picker-hint">
+            <FiLock aria-hidden="true" />
+            Alt held: supported browsers will open in private mode.
+          </p>
         ) : null}
 
         <div className="picker-menu-list" role="menu" aria-label="Open URL in browser">
@@ -176,11 +189,29 @@ function PickerWindow() {
                   }}
                   disabled={isOpening}
                 >
-                  <span className="picker-menu-item-name">{browser.name}</span>
+                  <span className="picker-menu-item-name">
+                    <FiExternalLink aria-hidden="true" />
+                    {browser.name}
+                  </span>
                   <span className="picker-menu-item-meta">
-                    {browser.isDefault ? <span className="picker-chip">default</span> : null}
-                    {browser.isRunning ? <span className="picker-chip running">running</span> : null}
-                    {opensPrivate ? <span className="picker-chip private">private</span> : null}
+                    {browser.isDefault ? (
+                      <span className="picker-chip">
+                        <FiCheck aria-hidden="true" />
+                        default
+                      </span>
+                    ) : null}
+                    {browser.isRunning ? (
+                      <span className="picker-chip running">
+                        <FiZap aria-hidden="true" />
+                        running
+                      </span>
+                    ) : null}
+                    {opensPrivate ? (
+                      <span className="picker-chip private">
+                        <FiLock aria-hidden="true" />
+                        private
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               );
