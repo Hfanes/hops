@@ -7,36 +7,38 @@ use std::ffi::OsStr;
 use std::fs;
 use std::hash::{Hash, Hasher};
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State,
-    WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State, WebviewUrl,
+    WebviewWindowBuilder, WindowEvent,
 };
 use url::Url;
 
 #[cfg(target_os = "windows")]
-use winreg::RegKey;
-#[cfg(target_os = "windows")]
-use winreg::HKEY;
-#[cfg(target_os = "windows")]
-use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WRITE};
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+#[cfg(target_os = "windows")]
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WRITE};
+#[cfg(target_os = "windows")]
+use winreg::RegKey;
+#[cfg(target_os = "windows")]
+use winreg::HKEY;
 
 const CONFIG_FILENAME: &str = "config.json";
 const HOPS_APP_NAME: &str = "Hops";
@@ -55,6 +57,8 @@ const ASSOCSTR_PROGID: u32 = 20;
 const VK_SHIFT: i32 = 0x10;
 #[cfg(target_os = "windows")]
 const VK_CONTROL: i32 = 0x11;
+#[cfg(target_os = "windows")]
+const VK_MENU: i32 = 0x12;
 const PICKER_MENU_WIDTH: u32 = 280;
 const PICKER_MENU_MIN_HEIGHT: u32 = 128;
 const PICKER_MENU_MAX_HEIGHT: u32 = 340;
@@ -62,6 +66,7 @@ const PICKER_MENU_ROW_HEIGHT: u32 = 46;
 const PICKER_MENU_CHROME_HEIGHT: u32 = 92;
 const PICKER_CURSOR_OFFSET_X: i32 = 6;
 const PICKER_CURSOR_OFFSET_Y: i32 = 10;
+const PICKER_IDLE_DESTROY_SECONDS: u64 = 15;
 
 #[cfg(target_os = "windows")]
 #[link(name = "Shlwapi")]
@@ -232,12 +237,14 @@ struct PickerSession {
     source: PickerLaunchSource,
     disable_transparency: bool,
     always_show_picker: bool,
+    alt_pressed: bool,
     browsers: Vec<PickerBrowserEntry>,
 }
 
 #[derive(Default)]
 struct PickerState {
     session: Mutex<Option<PickerSession>>,
+    idle_destroy_token: Mutex<u64>,
 }
 
 #[tauri::command]
@@ -352,13 +359,16 @@ fn show_picker_for_url(
 }
 
 #[tauri::command]
-fn hide_picker_window(app: AppHandle) -> Result<(), String> {
-    hide_picker_window_internal(&app)
+fn hide_picker_window(app: AppHandle, state: State<'_, PickerState>) -> Result<(), String> {
+    hide_picker_window_internal(&app, &state)
 }
 
 #[tauri::command]
-fn show_settings_window_command(app: AppHandle) -> Result<(), String> {
-    hide_picker_window_internal(&app)?;
+fn show_settings_window_command(
+    app: AppHandle,
+    state: State<'_, PickerState>,
+) -> Result<(), String> {
+    hide_picker_window_internal(&app, &state)?;
     show_settings_window(&app);
     Ok(())
 }
@@ -441,8 +451,12 @@ fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| format!("Could not resolve app data directory: {error}"))?;
 
-    fs::create_dir_all(&app_data)
-        .map_err(|error| format!("Could not create app data directory {:?}: {error}", app_data))?;
+    fs::create_dir_all(&app_data).map_err(|error| {
+        format!(
+            "Could not create app data directory {:?}: {error}",
+            app_data
+        )
+    })?;
 
     Ok(app_data.join(CONFIG_FILENAME))
 }
@@ -457,10 +471,10 @@ fn browser_registration_status_windows() -> Result<BrowserRegistrationStatus, St
         .and_then(|key| key.get_value::<String, _>(HOPS_APP_NAME).ok())
         .is_some_and(|value| value == "Software\\Hops\\Capabilities");
 
-    let current_http_prog_id = query_url_association_prog_id("http")
-        .or_else(|| read_url_user_choice_prog_id("http"));
-    let current_https_prog_id = query_url_association_prog_id("https")
-        .or_else(|| read_url_user_choice_prog_id("https"));
+    let current_http_prog_id =
+        query_url_association_prog_id("http").or_else(|| read_url_user_choice_prog_id("http"));
+    let current_https_prog_id =
+        query_url_association_prog_id("https").or_else(|| read_url_user_choice_prog_id("https"));
 
     let is_default_http = current_http_prog_id
         .as_deref()
@@ -516,19 +530,26 @@ fn query_url_association_prog_id(scheme: &str) -> Option<String> {
         return None;
     }
 
-    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    let end = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
     String::from_utf16(&buffer[..end]).ok()
 }
 
 #[cfg(target_os = "windows")]
 fn wide_null(value: &str) -> Vec<u16> {
-    OsStr::new(value).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
 fn read_url_user_choice_prog_id(scheme: &str) -> Option<String> {
-    let key_path =
-        format!("Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\{scheme}\\UserChoice");
+    let key_path = format!(
+        "Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\{scheme}\\UserChoice"
+    );
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     hkcu.open_subkey(key_path)
         .ok()
@@ -654,7 +675,8 @@ fn register_hops_as_browser_windows() -> Result<(), String> {
 fn unregister_hops_as_browser_windows() -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
 
-    if let Ok(registered_apps) = hkcu.open_subkey_with_flags("Software\\RegisteredApplications", KEY_WRITE)
+    if let Ok(registered_apps) =
+        hkcu.open_subkey_with_flags("Software\\RegisteredApplications", KEY_WRITE)
     {
         let _ = registered_apps.delete_value(HOPS_APP_NAME);
     }
@@ -720,7 +742,11 @@ fn normalize_config(config: &mut AppConfig) {
 
     hydrate_detected_browser_defaults(config);
 
-    let browser_ids: HashSet<String> = config.browsers.iter().map(|browser| browser.id.clone()).collect();
+    let browser_ids: HashSet<String> = config
+        .browsers
+        .iter()
+        .map(|browser| browser.id.clone())
+        .collect();
 
     if let Some(default_browser_id) = config.default_browser_id.clone() {
         if !browser_ids.contains(&default_browser_id) {
@@ -747,7 +773,11 @@ fn hydrate_detected_browser_defaults(config: &mut AppConfig) {
 }
 
 fn validate_config(config: &AppConfig) -> Result<(), String> {
-    let browser_ids: HashSet<String> = config.browsers.iter().map(|browser| browser.id.clone()).collect();
+    let browser_ids: HashSet<String> = config
+        .browsers
+        .iter()
+        .map(|browser| browser.id.clone())
+        .collect();
 
     if let Some(default_browser_id) = config.default_browser_id.as_deref() {
         if !browser_ids.contains(default_browser_id) {
@@ -889,7 +919,11 @@ fn detect_browsers_from_known_paths(seen_paths: &HashSet<String>) -> Vec<Browser
             }
 
             local_seen.insert(normalized.clone());
-            browsers.push(build_detected_browser(&path_string, Some(definition.display_name), None));
+            browsers.push(build_detected_browser(
+                &path_string,
+                Some(definition.display_name),
+                None,
+            ));
             break;
         }
     }
@@ -947,7 +981,10 @@ fn registry_browser_roots() -> &'static [(HKEY, &'static str)] {
     &[
         (HKEY_CURRENT_USER, r"SOFTWARE\Clients\StartMenuInternet"),
         (HKEY_LOCAL_MACHINE, r"SOFTWARE\Clients\StartMenuInternet"),
-        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet",
+        ),
     ]
 }
 
@@ -991,7 +1028,9 @@ fn resolve_browser_metadata(
     let exe_name = executable_name_from_path(path).unwrap_or_else(|| "browser".to_string());
     let exe_name = exe_name.to_lowercase();
 
-    if let Some(definition) = display_name_hint.and_then(find_known_browser_definition_by_display_name) {
+    if let Some(definition) =
+        display_name_hint.and_then(find_known_browser_definition_by_display_name)
+    {
         return ResolvedBrowserMetadata {
             name: definition.display_name.to_string(),
             family: definition.family,
@@ -1029,7 +1068,9 @@ fn resolve_browser_metadata(
     }
 }
 
-fn find_known_browser_definition_by_display_name(name: &str) -> Option<&'static KnownBrowserDefinition> {
+fn find_known_browser_definition_by_display_name(
+    name: &str,
+) -> Option<&'static KnownBrowserDefinition> {
     known_browser_definitions()
         .iter()
         .find(|definition| definition.display_name.eq_ignore_ascii_case(name))
@@ -1052,100 +1093,77 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Google Chrome",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Google\\Chrome\\Application\\chrome.exe",
-            ],
+            known_install_path_suffixes: &["Google\\Chrome\\Application\\chrome.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["firefox"],
             display_name: "Mozilla Firefox",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Mozilla Firefox\\firefox.exe",
-            ],
+            known_install_path_suffixes: &["Mozilla Firefox\\firefox.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["librewolf"],
             display_name: "LibreWolf",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "LibreWolf\\librewolf.exe",
-            ],
+            known_install_path_suffixes: &["LibreWolf\\librewolf.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["waterfox"],
             display_name: "Waterfox",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Waterfox\\waterfox.exe",
-            ],
+            known_install_path_suffixes: &["Waterfox\\waterfox.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["floorp"],
             display_name: "Floorp",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Floorp\\floorp.exe",
-            ],
+            known_install_path_suffixes: &["Floorp\\floorp.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["zen"],
             display_name: "Zen",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Zen Browser\\zen.exe",
-            ],
+            known_install_path_suffixes: &["Zen Browser\\zen.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["msedge"],
             display_name: "Microsoft Edge",
             family: BrowserFamily::Edge,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Microsoft\\Edge\\Application\\msedge.exe",
-            ],
+            known_install_path_suffixes: &["Microsoft\\Edge\\Application\\msedge.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["brave", "bravebrowser", "brave-browser"],
             display_name: "Brave",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-            ],
+            known_install_path_suffixes: &["BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["opera", "launcher"],
             display_name: "Opera",
             family: BrowserFamily::Opera,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Programs\\Opera\\opera.exe",
-                "Opera\\launcher.exe",
-            ],
+            known_install_path_suffixes: &["Programs\\Opera\\opera.exe", "Opera\\launcher.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["vivaldi"],
             display_name: "Vivaldi",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "Vivaldi\\Application\\vivaldi.exe",
-            ],
+            known_install_path_suffixes: &["Vivaldi\\Application\\vivaldi.exe"],
         },
         KnownBrowserDefinition {
             executable_aliases: &["helium"],
             display_name: "Helium",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
-            known_install_path_suffixes: &[
-                "imput\\Helium\\Application\\chrome.exe",
-            ],
+            known_install_path_suffixes: &["imput\\Helium\\Application\\chrome.exe"],
         },
     ];
 
@@ -1154,9 +1172,10 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
 
 #[cfg(target_os = "windows")]
 fn known_install_paths(definition: &KnownBrowserDefinition) -> Vec<PathBuf> {
-    let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-    let program_files_x86 =
-        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+    let program_files =
+        std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+    let program_files_x86 = std::env::var("ProgramFiles(x86)")
+        .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
     let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let roots = [
         PathBuf::from(&program_files),
@@ -1196,7 +1215,9 @@ fn executable_name_from_path(path: &str) -> Option<String> {
 fn running_processes() -> Result<HashSet<String>, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
-        return Err("Could not create process snapshot while checking running browsers.".to_string());
+        return Err(
+            "Could not create process snapshot while checking running browsers.".to_string(),
+        );
     }
 
     let mut paths = HashSet::new();
@@ -1256,7 +1277,8 @@ fn query_process_image_path(process_id: u32) -> Option<String> {
 
     let mut buffer = vec![0u16; 32768];
     let mut length = buffer.len() as u32;
-    let success = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
+    let success =
+        unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
 
     unsafe {
         CloseHandle(handle);
@@ -1371,9 +1393,8 @@ fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
     }
 
     match rule.pattern_type {
-        RulePatternType::Hostname => extract_hostname(url).is_some_and(|hostname| {
-            hostname.eq_ignore_ascii_case(&pattern.to_lowercase())
-        }),
+        RulePatternType::Hostname => extract_hostname(url)
+            .is_some_and(|hostname| hostname.eq_ignore_ascii_case(&pattern.to_lowercase())),
         RulePatternType::HostnameSubdomains => {
             let domain = pattern.trim_start_matches("*.").to_lowercase();
             extract_hostname(url).is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
@@ -1515,6 +1536,16 @@ fn is_ctrl_shift_picker_trigger_active() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn is_alt_pressed() -> bool {
+    (unsafe { GetAsyncKeyState(VK_MENU) }) < 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_alt_pressed() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
 fn current_cursor_position() -> Option<(i32, i32)> {
     let mut point = WinPoint { x: 0, y: 0 };
     let success = unsafe { GetCursorPos(&mut point) };
@@ -1594,31 +1625,104 @@ fn picker_window_position(
     (desired_x.max(0), desired_y.max(0))
 }
 
+fn picker_debug_log(message: &str) {
+    #[cfg(debug_assertions)]
+    eprintln!("Hops picker: {message}");
+}
+
+fn next_picker_idle_destroy_token(state: &PickerState) -> Result<u64, String> {
+    let mut token = state
+        .idle_destroy_token
+        .lock()
+        .map_err(|_| "Picker idle destroy lock was poisoned.".to_string())?;
+    *token += 1;
+    Ok(*token)
+}
+
+fn cancel_picker_idle_destroy(state: &PickerState) -> Result<(), String> {
+    let _ = next_picker_idle_destroy_token(state)?;
+    picker_debug_log("destroy canceled");
+    Ok(())
+}
+
+fn schedule_picker_idle_destroy(app: &AppHandle, state: &PickerState) -> Result<(), String> {
+    let token = next_picker_idle_destroy_token(state)?;
+    picker_debug_log("destroy scheduled");
+
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(PICKER_IDLE_DESTROY_SECONDS));
+
+        let app_for_main = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            let state = app_for_main.state::<PickerState>();
+            let current_token = match state.idle_destroy_token.lock() {
+                Ok(current) => *current,
+                Err(_) => {
+                    eprintln!("Hops picker: idle destroy lock was poisoned.");
+                    return;
+                }
+            };
+
+            if current_token != token {
+                return;
+            }
+
+            if let Some(window) = app_for_main.get_webview_window(PICKER_WINDOW_LABEL) {
+                if let Err(error) = window.destroy() {
+                    eprintln!("Hops picker: could not destroy idle picker window: {error}");
+                    return;
+                }
+
+                picker_debug_log("destroyed");
+            }
+        }) {
+            eprintln!("Hops picker: could not schedule idle destroy on main thread: {error}");
+        }
+    });
+
+    Ok(())
+}
+
 fn ensure_picker_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(PICKER_WINDOW_LABEL) {
+        picker_debug_log("reused");
         return Ok(window);
     }
 
-    WebviewWindowBuilder::new(app, PICKER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-        .title("Hops Picker")
-        .inner_size(PICKER_MENU_WIDTH as f64, PICKER_MENU_MIN_HEIGHT as f64)
-        .resizable(false)
-        .decorations(false)
-        .transparent(true)
-        .visible(false)
-        .focused(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .build()
-        .map_err(|error| format!("Could not build picker window: {error}"))
+    let window = WebviewWindowBuilder::new(
+        app,
+        PICKER_WINDOW_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("Hops Picker")
+    .inner_size(PICKER_MENU_WIDTH as f64, PICKER_MENU_MIN_HEIGHT as f64)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .visible(false)
+    .focused(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .build()
+    .map_err(|error| format!("Could not build picker window during picker create: {error}"))?;
+
+    picker_debug_log("created");
+    Ok(window)
 }
 
-fn hide_picker_window_internal(app: &AppHandle) -> Result<(), String> {
+fn hide_picker_window_internal(app: &AppHandle, state: &PickerState) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(PICKER_WINDOW_LABEL) {
+        let was_visible = window.is_visible().unwrap_or(true);
         window
             .hide()
-            .map_err(|error| format!("Could not hide picker window: {error}"))?;
+            .map_err(|error| format!("Could not hide picker window during picker hide: {error}"))?;
+
+        if was_visible {
+            picker_debug_log("hidden");
+            schedule_picker_idle_destroy(app, state)?;
+        }
     }
 
     Ok(())
@@ -1664,6 +1768,7 @@ fn build_picker_session(
         source,
         disable_transparency: config.disable_transparency,
         always_show_picker: config.always_show_picker,
+        alt_pressed: is_alt_pressed(),
         browsers,
     })
 }
@@ -1676,31 +1781,37 @@ fn show_picker_window(
     source: PickerLaunchSource,
     reason: &str,
 ) -> Result<(), String> {
+    cancel_picker_idle_destroy(state)?;
+
     let session = build_picker_session(config, url, source, reason)?;
     store_picker_session(state, session.clone())?;
 
     let window = ensure_picker_window(app)?;
     let menu_height = picker_window_height(session.browsers.len());
     window
-        .set_size(Size::Physical(PhysicalSize::new(PICKER_MENU_WIDTH, menu_height)))
-        .map_err(|error| format!("Could not resize picker window: {error}"))?;
+        .set_size(Size::Physical(PhysicalSize::new(
+            PICKER_MENU_WIDTH,
+            menu_height,
+        )))
+        .map_err(|error| format!("Could not resize picker window during picker show: {error}"))?;
 
     if let Some((cursor_x, cursor_y)) = current_cursor_position() {
-        let (x, y) = picker_window_position(app, cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height);
+        let (x, y) =
+            picker_window_position(app, cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height);
         window
             .set_position(Position::Physical(PhysicalPosition::new(x, y)))
-            .map_err(|error| format!("Could not move picker window: {error}"))?;
+            .map_err(|error| format!("Could not move picker window during picker show: {error}"))?;
     } else {
         let _ = window.center();
     }
 
     window
         .show()
-        .map_err(|error| format!("Could not show picker window: {error}"))?;
+        .map_err(|error| format!("Could not show picker window during picker show: {error}"))?;
     let _ = window.unminimize();
     let _ = window.set_focus();
     app.emit_to(PICKER_WINDOW_LABEL, PICKER_SESSION_EVENT, session)
-        .map_err(|error| format!("Could not emit picker state: {error}"))?;
+        .map_err(|error| format!("Could not emit picker state during picker show: {error}"))?;
 
     Ok(())
 }
@@ -1728,7 +1839,7 @@ fn handle_incoming_url(
     let decision = resolve_route(&config, url)?;
 
     if decision.action == RouteAction::OpenBrowser {
-        hide_picker_window_internal(app)?;
+        hide_picker_window_internal(app, state)?;
         if let Some(browser_id) = decision.browser_id.as_deref() {
             open_url_with_browser(&config, browser_id, url, decision.private_mode)?;
         }
@@ -1814,10 +1925,6 @@ pub fn run() {
                 eprintln!("{error}");
             }
 
-            if let Err(error) = ensure_picker_window(&app.handle()) {
-                eprintln!("{error}");
-            }
-
             let startup_url = extract_url_from_args(&initial_args);
 
             if let Some(url) = startup_url {
@@ -1828,7 +1935,9 @@ pub fn run() {
                 }
             } else {
                 match load_or_init_config(&app.handle(), true) {
-                    Ok(config) if config.onboarding_completed => hide_settings_window(&app.handle()),
+                    Ok(config) if config.onboarding_completed => {
+                        hide_settings_window(&app.handle())
+                    }
                     Ok(_) => show_settings_window(&app.handle()),
                     Err(error) => {
                         eprintln!("Could not load config during startup: {error}");
@@ -1839,21 +1948,23 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            match (window.label(), event) {
-                ("main", WindowEvent::CloseRequested { api, .. }) => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-                (PICKER_WINDOW_LABEL, WindowEvent::CloseRequested { api, .. }) => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-                (PICKER_WINDOW_LABEL, WindowEvent::Focused(false)) => {
-                    let _ = window.hide();
-                }
-                _ => {}
+        .on_window_event(|window, event| match (window.label(), event) {
+            ("main", WindowEvent::CloseRequested { api, .. }) => {
+                api.prevent_close();
+                let _ = window.hide();
             }
+            (PICKER_WINDOW_LABEL, WindowEvent::CloseRequested { api, .. }) => {
+                api.prevent_close();
+                let app = window.app_handle();
+                let state = app.state::<PickerState>();
+                let _ = hide_picker_window_internal(app, &state);
+            }
+            (PICKER_WINDOW_LABEL, WindowEvent::Focused(false)) => {
+                let app = window.app_handle();
+                let state = app.state::<PickerState>();
+                let _ = hide_picker_window_internal(app, &state);
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             load_config,
@@ -1880,13 +1991,13 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AppConfig, BrowserConfig, BrowserSource, BrowserFamily, RuleConfig, RulePatternType,
-        build_detected_browser, hydrate_detected_browser_defaults, merge_detected_browsers,
-        resolve_browser_metadata, rule_matches,
-    };
     #[cfg(target_os = "windows")]
     use super::registry_browser_roots;
+    use super::{
+        build_detected_browser, hydrate_detected_browser_defaults, merge_detected_browsers,
+        resolve_browser_metadata, rule_matches, AppConfig, BrowserConfig, BrowserFamily,
+        BrowserSource, RuleConfig, RulePatternType,
+    };
     #[cfg(target_os = "windows")]
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
@@ -1931,13 +2042,22 @@ mod tests {
     #[test]
     fn glob_match_works() {
         let rule = test_rule(RulePatternType::Glob, "https://jira.*/browse/ENG-*");
-        assert!(rule_matches(&rule, "https://jira.mycompany.com/browse/ENG-11"));
-        assert!(!rule_matches(&rule, "https://jira.mycompany.com/browse/OPS-11"));
+        assert!(rule_matches(
+            &rule,
+            "https://jira.mycompany.com/browse/ENG-11"
+        ));
+        assert!(!rule_matches(
+            &rule,
+            "https://jira.mycompany.com/browse/OPS-11"
+        ));
     }
 
     #[test]
     fn regex_match_works() {
-        let rule = test_rule(RulePatternType::Regex, r"^https?://(www\.)?youtube\.com/watch");
+        let rule = test_rule(
+            RulePatternType::Regex,
+            r"^https?://(www\.)?youtube\.com/watch",
+        );
         assert!(rule_matches(&rule, "https://youtube.com/watch?v=abc"));
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
     }
@@ -1963,7 +2083,10 @@ mod tests {
     #[test]
     fn firefox_family_metadata_gets_private_window_flag() {
         for browser in [
-            ("C:\\Program Files\\Mozilla Firefox\\firefox.exe", "Mozilla Firefox"),
+            (
+                "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+                "Mozilla Firefox",
+            ),
             ("C:\\Program Files\\LibreWolf\\librewolf.exe", "LibreWolf"),
             ("C:\\Program Files\\Waterfox\\waterfox.exe", "Waterfox"),
             ("C:\\Program Files\\Floorp\\floorp.exe", "Floorp"),
@@ -1996,11 +2119,8 @@ mod tests {
 
     #[test]
     fn unknown_browser_uses_registry_name_and_has_no_private_flag() {
-        let metadata = resolve_browser_metadata(
-            "C:\\Tools\\Arc\\arc.exe",
-            None,
-            Some("Arc_Browser"),
-        );
+        let metadata =
+            resolve_browser_metadata("C:\\Tools\\Arc\\arc.exe", None, Some("Arc_Browser"));
         assert_eq!(metadata.family, BrowserFamily::Unknown);
         assert_eq!(metadata.name, "Arc Browser");
         assert_eq!(metadata.private_flag, None);
@@ -2018,11 +2138,17 @@ mod tests {
             is_hidden: false,
         }]);
 
-        merge_detected_browsers(&mut config, vec![build_detected_browser(path, Some("LibreWolf"), None)]);
+        merge_detected_browsers(
+            &mut config,
+            vec![build_detected_browser(path, Some("LibreWolf"), None)],
+        );
 
         assert_eq!(config.browsers.len(), 1);
         assert_eq!(config.browsers[0].id, "manual-librewolf");
-        assert_eq!(config.browsers[0].private_flag.as_deref(), Some("--my-private"));
+        assert_eq!(
+            config.browsers[0].private_flag.as_deref(),
+            Some("--my-private")
+        );
     }
 
     #[test]
@@ -2033,7 +2159,10 @@ mod tests {
         hidden_detected.is_hidden = true;
         let mut config = test_app_config(vec![hidden_detected]);
 
-        merge_detected_browsers(&mut config, vec![build_detected_browser(path, Some("LibreWolf"), None)]);
+        merge_detected_browsers(
+            &mut config,
+            vec![build_detected_browser(path, Some("LibreWolf"), None)],
+        );
 
         assert_eq!(config.browsers.len(), 1);
         assert_eq!(config.browsers[0].id, original_detected.id);
@@ -2080,8 +2209,14 @@ mod tests {
 
         hydrate_detected_browser_defaults(&mut config);
 
-        assert_eq!(config.browsers[0].private_flag.as_deref(), Some("--private-window"));
-        assert_eq!(config.browsers[1].private_flag.as_deref(), Some("--private-window"));
+        assert_eq!(
+            config.browsers[0].private_flag.as_deref(),
+            Some("--private-window")
+        );
+        assert_eq!(
+            config.browsers[1].private_flag.as_deref(),
+            Some("--private-window")
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -2092,7 +2227,10 @@ mod tests {
             &[
                 (HKEY_CURRENT_USER, r"SOFTWARE\Clients\StartMenuInternet"),
                 (HKEY_LOCAL_MACHINE, r"SOFTWARE\Clients\StartMenuInternet"),
-                (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet"),
+                (
+                    HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet"
+                ),
             ]
         );
     }
