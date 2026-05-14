@@ -9,6 +9,7 @@ import {
   FiList,
   FiMoon,
   FiNavigation,
+  FiPlus,
   FiSettings,
   FiSun,
   FiX,
@@ -67,6 +68,7 @@ interface StatusState {
 }
 
 type SettingsActionPanel = "none" | "reset" | "rerun-onboarding";
+type FormModal = "manual-browser" | "rule" | null;
 
 const EMPTY_STATUS: StatusState = { kind: "idle", text: "" };
 
@@ -341,6 +343,7 @@ function App() {
   );
   const [settingsActionPanel, setSettingsActionPanel] =
     useState<SettingsActionPanel>("none");
+  const [formModal, setFormModal] = useState<FormModal>(null);
 
   const [browserDraft, setBrowserDraft] = useState<BrowserDraft>({
     name: "",
@@ -467,6 +470,10 @@ function App() {
 
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [config, onboardingStep]);
+
+  useEffect(() => {
+    setFormModal(null);
+  }, [activeTab]);
 
   function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
     let nextConfig: AppConfig | null = null;
@@ -795,6 +802,7 @@ function App() {
       successText: `Added manual browser "${name}".`,
       errorPrefix: "Could not add manual browser",
     });
+    setFormModal(null);
   }
 
   function updateRule(ruleId: string, patch: Partial<RuleConfig>) {
@@ -979,6 +987,7 @@ function App() {
         errorPrefix: "Could not save new rule",
       });
       setRuleDraft((current) => ({ ...current, pattern: "" }));
+      setFormModal(null);
     } catch {
       setConfig(config);
       configRef.current = config;
@@ -1191,7 +1200,7 @@ function App() {
     "flex min-h-full flex-col gap-3 border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
   const contentClassName = "min-w-0 overflow-auto p-3.5 md:p-[18px]";
   const topbarClassName =
-    "mb-3.5 flex flex-col items-stretch justify-between gap-4 border-b border-[var(--h-border)] pb-3.5 md:flex-row md:items-start";
+    "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
 
   const sidebarNav = (
     <aside className={sidebarClassName} aria-label="Primary">
@@ -1297,6 +1306,200 @@ function App() {
       </button>
     </div>
   ) : null;
+
+  const activeFormModal =
+    formModal === "manual-browser" ? (
+      <div
+        className="modal-backdrop"
+        role="presentation"
+        onMouseDown={() => setFormModal(null)}
+      >
+        <section
+          className="modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="manual-browser-title"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="modal-title">
+            <h3 id="manual-browser-title">Add manual browser</h3>
+            <button
+              type="button"
+              className="icon-button secondary"
+              onClick={() => setFormModal(null)}
+              aria-label="Close add manual browser"
+              title="Close"
+            >
+              <FiX aria-hidden="true" />
+            </button>
+          </div>
+          <label>
+            Name
+            <input
+              value={browserDraft.name}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBrowserDraft((current) => ({
+                  ...current,
+                  name: value,
+                }));
+              }}
+              placeholder="Portable Chrome"
+            />
+          </label>
+          <label>
+            Executable path
+            <input
+              value={browserDraft.path}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBrowserDraft((current) => ({
+                  ...current,
+                  path: value,
+                }));
+              }}
+              placeholder="C:\\Tools\\Chrome\\chrome.exe"
+            />
+          </label>
+          <label>
+            Private mode flag
+            <input
+              value={browserDraft.privateFlag}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setBrowserDraft((current) => ({
+                  ...current,
+                  privateFlag: value,
+                }));
+              }}
+              placeholder="--incognito"
+            />
+          </label>
+          <div className="inline-actions">
+            <button
+              type="button"
+              onClick={() => void addManualBrowser()}
+              disabled={isSaving}
+            >
+              Add browser
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setFormModal(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      </div>
+    ) : formModal === "rule" ? (
+      <div
+        className="modal-backdrop"
+        role="presentation"
+        onMouseDown={() => setFormModal(null)}
+      >
+        <section
+          className="modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rule-modal-title"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="modal-title">
+            <div>
+              <h3 id="rule-modal-title">Add rule</h3>
+              <p className="setting-help">New rules are created as enabled.</p>
+            </div>
+            <button
+              type="button"
+              className="icon-button secondary"
+              onClick={() => setFormModal(null)}
+              aria-label="Close add rule"
+              title="Close"
+            >
+              <FiX aria-hidden="true" />
+            </button>
+          </div>
+          <label>
+            Pattern
+            <input
+              value={ruleDraft.pattern}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setRuleDraft((current) => ({
+                  ...current,
+                  pattern: value,
+                }));
+              }}
+              placeholder="*.notion.so"
+            />
+          </label>
+          <PatternTypePicker
+            name="new-rule-pattern-type"
+            value={ruleDraft.patternType}
+            onChange={(value) =>
+              setRuleDraft((current) => ({
+                ...current,
+                patternType: value,
+              }))
+            }
+          />
+          <label>
+            Browser
+            <select
+              value={ruleDraft.browserId}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setRuleDraft((current) => ({
+                  ...current,
+                  browserId: value,
+                }));
+              }}
+            >
+              <option value="">Choose browser</option>
+              {visibleBrowsers.map((browser) => (
+                <option key={browser.id} value={browser.id}>
+                  {browser.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="dual-toggle">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={ruleDraft.privateMode}
+                onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+                  setRuleDraft((current) => ({
+                    ...current,
+                    privateMode: checked,
+                  }));
+                }}
+              />
+              <span>Private mode</span>
+            </label>
+          </div>
+          <div className="inline-actions">
+            <button
+              type="button"
+              onClick={() => void addRule()}
+              disabled={isSaving || !visibleBrowsers.length}
+            >
+              Add rule
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setFormModal(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      </div>
+    ) : null;
 
   if (isLoading) {
     return (
@@ -1603,16 +1806,39 @@ function App() {
               <p>{TAB_TITLES[activeTab].subtitle}</p>
             </div>
             <div className="actions">
-              <button
-                type="button"
-                className="secondary"
-                onClick={handleRefreshBrowsers}
-                disabled={isRefreshing}
-              >
-                {isRefreshing ? "Refreshing..." : "Refresh browsers"}
-              </button>
+              {activeTab === "browsers" ? (
+                <>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={handleRefreshBrowsers}
+                    disabled={isRefreshing}
+                  >
+                    {isRefreshing ? "Refreshing..." : "Refresh browsers"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormModal("manual-browser")}
+                  >
+                    <FiPlus aria-hidden="true" />
+                    Add browser
+                  </button>
+                </>
+              ) : null}
+              {activeTab === "rules" ? (
+                <button
+                  type="button"
+                  onClick={() => setFormModal("rule")}
+                  disabled={!visibleBrowsers.length}
+                >
+                  <FiPlus aria-hidden="true" />
+                  Add rule
+                </button>
+              ) : null}
             </div>
           </header>
+
+          {activeFormModal}
 
           {statusBanner}
 
@@ -2029,57 +2255,6 @@ function App() {
                   </article>
                 ))}
               </div>
-
-              <article className="card">
-                <h3>Add manual browser</h3>
-                <label>
-                  Name
-                  <input
-                    value={browserDraft.name}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setBrowserDraft((current) => ({
-                        ...current,
-                        name: value,
-                      }));
-                    }}
-                    placeholder="Portable Chrome"
-                  />
-                </label>
-                <label>
-                  Executable path
-                  <input
-                    value={browserDraft.path}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setBrowserDraft((current) => ({
-                        ...current,
-                        path: value,
-                      }));
-                    }}
-                    placeholder="C:\\Tools\\Chrome\\chrome.exe"
-                  />
-                </label>
-                <label>
-                  Private mode flag
-                  <input
-                    value={browserDraft.privateFlag}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setBrowserDraft((current) => ({
-                        ...current,
-                        privateFlag: value,
-                      }));
-                    }}
-                    placeholder="--incognito"
-                  />
-                </label>
-                <div className="inline-actions">
-                  <button type="button" onClick={addManualBrowser}>
-                    Add browser
-                  </button>
-                </div>
-              </article>
             </section>
           ) : null}
 
@@ -2088,85 +2263,6 @@ function App() {
               {!visibleBrowsers.length ? (
                 <p>Add or detect at least one browser before creating rules.</p>
               ) : null}
-
-              <section className="rules-section">
-                <h3>Create rule</h3>
-                <p className="setting-help">
-                  New rules are always created as enabled.
-                </p>
-                <article className="card">
-                  <label>
-                    Pattern
-                    <input
-                      value={ruleDraft.pattern}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setRuleDraft((current) => ({
-                          ...current,
-                          pattern: value,
-                        }));
-                      }}
-                      placeholder="*.notion.so"
-                    />
-                  </label>
-                  <PatternTypePicker
-                    name="new-rule-pattern-type"
-                    value={ruleDraft.patternType}
-                    onChange={(value) =>
-                      setRuleDraft((current) => ({
-                        ...current,
-                        patternType: value,
-                      }))
-                    }
-                  />
-                  <label>
-                    Browser
-                    <select
-                      value={ruleDraft.browserId}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setRuleDraft((current) => ({
-                          ...current,
-                          browserId: value,
-                        }));
-                      }}
-                    >
-                      <option value="">Choose browser</option>
-                      {visibleBrowsers.map((browser) => (
-                        <option key={browser.id} value={browser.id}>
-                          {browser.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="dual-toggle">
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={ruleDraft.privateMode}
-                        onChange={(event) => {
-                          const checked = event.currentTarget.checked;
-                          setRuleDraft((current) => ({
-                            ...current,
-                            privateMode: checked,
-                          }));
-                        }}
-                      />
-                      <span>Private mode</span>
-                    </label>
-                  </div>
-                  <div className="inline-actions">
-                    <button
-                      type="button"
-                      onClick={() => void addRule()}
-                      disabled={isSaving}
-                    >
-                      Add rule
-                    </button>
-                  </div>
-                </article>
-              </section>
-
               <section className="rules-section">
                 <h3>Existing rules</h3>
                 <p className="setting-help">
