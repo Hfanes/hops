@@ -12,27 +12,54 @@ use std::os::windows::process::CommandExt;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State,
+    WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use url::Url;
 
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 #[cfg(target_os = "windows")]
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WRITE};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 const CONFIG_FILENAME: &str = "config.json";
 const HOPS_APP_NAME: &str = "Hops";
 const HOPS_PROTOCOL_PROG_ID: &str = "HopsURL";
 const HOPS_HTML_PROG_ID: &str = "HopsHTML";
 const HOPS_CUSTOM_URI_SCHEME: &str = "Hops";
+const PICKER_WINDOW_LABEL: &str = "picker";
+const PICKER_SESSION_EVENT: &str = "picker-session";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
 const ASSOCF_NONE: u32 = 0;
 #[cfg(target_os = "windows")]
 const ASSOCSTR_PROGID: u32 = 20;
+#[cfg(target_os = "windows")]
+const VK_SHIFT: i32 = 0x10;
+#[cfg(target_os = "windows")]
+const VK_CONTROL: i32 = 0x11;
+const PICKER_MENU_WIDTH: u32 = 280;
+const PICKER_MENU_MIN_HEIGHT: u32 = 128;
+const PICKER_MENU_MAX_HEIGHT: u32 = 340;
+const PICKER_MENU_ROW_HEIGHT: u32 = 46;
+const PICKER_MENU_CHROME_HEIGHT: u32 = 92;
+const PICKER_CURSOR_OFFSET_X: i32 = 6;
+const PICKER_CURSOR_OFFSET_Y: i32 = 10;
 
 #[cfg(target_os = "windows")]
 #[link(name = "Shlwapi")]
@@ -45,6 +72,20 @@ unsafe extern "system" {
         psz_out: *mut u16,
         pcch_out: *mut u32,
     ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct WinPoint {
+    x: i32,
+    y: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "User32")]
+unsafe extern "system" {
+    fn GetAsyncKeyState(v_key: i32) -> i16;
+    fn GetCursorPos(lp_point: *mut WinPoint) -> i32;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,6 +180,39 @@ struct BrowserRegistrationStatus {
     current_https_prog_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PickerLaunchSource {
+    Route,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PickerBrowserEntry {
+    id: String,
+    name: String,
+    private_flag: Option<String>,
+    is_default: bool,
+    is_running: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PickerSession {
+    url: String,
+    reason: String,
+    source: PickerLaunchSource,
+    disable_transparency: bool,
+    always_show_picker: bool,
+    browsers: Vec<PickerBrowserEntry>,
+}
+
+#[derive(Default)]
+struct PickerState {
+    session: Mutex<Option<PickerSession>>,
+}
+
 #[tauri::command]
 fn load_config(app: AppHandle) -> Result<AppConfig, String> {
     load_or_init_config(&app, true)
@@ -222,6 +296,44 @@ fn open_url(app: AppHandle, request: OpenUrlRequest) -> Result<(), String> {
         &request.url,
         request.private_mode,
     )
+}
+
+#[tauri::command]
+fn get_picker_state(state: State<'_, PickerState>) -> Result<Option<PickerSession>, String> {
+    let session = state
+        .session
+        .lock()
+        .map_err(|_| "Picker state lock was poisoned.".to_string())?;
+    Ok(session.clone())
+}
+
+#[tauri::command]
+fn show_picker_for_url(
+    app: AppHandle,
+    state: State<'_, PickerState>,
+    url: String,
+) -> Result<(), String> {
+    let config = load_or_init_config(&app, false)?;
+    show_picker_window(
+        &app,
+        &state,
+        &config,
+        &url,
+        PickerLaunchSource::Manual,
+        "manual_open",
+    )
+}
+
+#[tauri::command]
+fn hide_picker_window(app: AppHandle) -> Result<(), String> {
+    hide_picker_window_internal(&app)
+}
+
+#[tauri::command]
+fn show_settings_window_command(app: AppHandle) -> Result<(), String> {
+    hide_picker_window_internal(&app)?;
+    show_settings_window(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -863,6 +975,9 @@ fn friendly_browser_name(exe_name: &str, registry_key: &str) -> String {
     match exe_name.to_lowercase().as_str() {
         "chrome" => "Google Chrome".to_string(),
         "firefox" => "Mozilla Firefox".to_string(),
+        "librewolf" => "LibreWolf".to_string(),
+        "waterfox" => "Waterfox".to_string(),
+        "floorp" => "Floorp".to_string(),
         "msedge" => "Microsoft Edge".to_string(),
         "brave" | "bravebrowser" | "brave-browser" => "Brave".to_string(),
         "opera" | "launcher" => "Opera".to_string(),
@@ -872,9 +987,30 @@ fn friendly_browser_name(exe_name: &str, registry_key: &str) -> String {
 }
 
 fn default_private_flag(exe_name: &str) -> Option<String> {
-    match exe_name.to_lowercase().as_str() {
-        "chrome" | "brave" | "vivaldi" => Some("--incognito".to_string()),
-        "firefox" => Some("-private-window".to_string()),
+    let exe_name = exe_name.to_lowercase();
+
+    if matches!(
+        exe_name.as_str(),
+        "chrome"
+            | "brave"
+            | "bravebrowser"
+            | "brave-browser"
+            | "vivaldi"
+            | "chromium"
+            | "chrome_proxy"
+            | "helium"
+    ) {
+        return Some("--incognito".to_string());
+    }
+
+    if matches!(
+        exe_name.as_str(),
+        "firefox" | "librewolf" | "waterfox" | "floorp" | "zen"
+    ) {
+        return Some("--private-window".to_string());
+    }
+
+    match exe_name.as_str() {
         "msedge" => Some("--inprivate".to_string()),
         "opera" | "launcher" => Some("--private".to_string()),
         _ => None,
@@ -898,10 +1034,38 @@ fn executable_name_from_path(path: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn running_processes() -> Result<HashSet<String>, String> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("Could not create process snapshot while checking running browsers.".to_string());
+    }
+
+    let mut paths = HashSet::new();
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..unsafe { std::mem::zeroed() }
+    };
+
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) != 0 };
+    while has_entry {
+        if let Some(path) = query_process_image_path(entry.th32ProcessID) {
+            paths.insert(normalize_path(&path));
+        }
+
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) != 0 };
+    }
+
+    unsafe {
+        CloseHandle(snapshot);
+    }
+
+    Ok(paths)
+}
+
+#[cfg(not(target_os = "windows"))]
 fn running_processes() -> Result<HashSet<String>, String> {
     let mut command = Command::new("tasklist");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
     command.stdin(Stdio::null()).stderr(Stdio::null());
 
     let output = command
@@ -925,6 +1089,29 @@ fn running_processes() -> Result<HashSet<String>, String> {
     Ok(names)
 }
 
+#[cfg(target_os = "windows")]
+fn query_process_image_path(process_id: u32) -> Option<String> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if handle.is_null() {
+        return None;
+    }
+
+    let mut buffer = vec![0u16; 32768];
+    let mut length = buffer.len() as u32;
+    let success = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
+
+    unsafe {
+        CloseHandle(handle);
+    }
+
+    if !success || length == 0 {
+        return None;
+    }
+
+    String::from_utf16(&buffer[..length as usize]).ok()
+}
+
+#[cfg(not(target_os = "windows"))]
 fn parse_first_csv_column(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -943,14 +1130,8 @@ fn parse_first_csv_column(line: &str) -> Option<String> {
 }
 
 fn is_browser_running(browser: &BrowserConfig, running_processes: &HashSet<String>) -> bool {
-    let process_name = Path::new(&browser.path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_lowercase());
-
-    process_name
-        .as_ref()
-        .is_some_and(|name| running_processes.contains(name))
+    let normalized_path = normalize_path(&browser.path);
+    running_processes.contains(&normalized_path)
 }
 
 fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
@@ -1163,6 +1344,34 @@ fn clean_cli_value(value: &str) -> String {
     value.trim().trim_matches('"').to_string()
 }
 
+#[cfg(target_os = "windows")]
+fn is_ctrl_shift_picker_trigger_active() -> bool {
+    let ctrl_pressed = unsafe { GetAsyncKeyState(VK_CONTROL) } < 0;
+    let shift_pressed = unsafe { GetAsyncKeyState(VK_SHIFT) } < 0;
+    ctrl_pressed && shift_pressed
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_ctrl_shift_picker_trigger_active() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn current_cursor_position() -> Option<(i32, i32)> {
+    let mut point = WinPoint { x: 0, y: 0 };
+    let success = unsafe { GetCursorPos(&mut point) };
+    if success == 0 {
+        return None;
+    }
+
+    Some((point.x, point.y))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn current_cursor_position() -> Option<(i32, i32)> {
+    None
+}
+
 fn extract_url_from_args(args: &[String]) -> Option<String> {
     for (index, arg) in args.iter().enumerate() {
         if arg == "--url" {
@@ -1198,17 +1407,182 @@ fn hide_settings_window(app: &AppHandle) {
     }
 }
 
-fn handle_incoming_url(app: &AppHandle, url: &str) -> Result<RouteDecision, String> {
+fn picker_window_height(browser_count: usize) -> u32 {
+    let browser_rows_height = browser_count as u32 * PICKER_MENU_ROW_HEIGHT;
+    let desired = PICKER_MENU_CHROME_HEIGHT + browser_rows_height;
+    desired.clamp(PICKER_MENU_MIN_HEIGHT, PICKER_MENU_MAX_HEIGHT)
+}
+
+fn picker_window_position(
+    app: &AppHandle,
+    cursor_x: i32,
+    cursor_y: i32,
+    width: u32,
+    height: u32,
+) -> (i32, i32) {
+    let desired_x = cursor_x + PICKER_CURSOR_OFFSET_X;
+    let desired_y = cursor_y + PICKER_CURSOR_OFFSET_Y;
+
+    if let Ok(Some(monitor)) = app.monitor_from_point(cursor_x as f64, cursor_y as f64) {
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let min_x = monitor_position.x;
+        let min_y = monitor_position.y;
+        let max_x = (monitor_position.x + monitor_size.width as i32 - width as i32).max(min_x);
+        let max_y = (monitor_position.y + monitor_size.height as i32 - height as i32).max(min_y);
+        return (desired_x.clamp(min_x, max_x), desired_y.clamp(min_y, max_y));
+    }
+
+    (desired_x.max(0), desired_y.max(0))
+}
+
+fn ensure_picker_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(PICKER_WINDOW_LABEL) {
+        return Ok(window);
+    }
+
+    WebviewWindowBuilder::new(app, PICKER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
+        .title("Hops Picker")
+        .inner_size(PICKER_MENU_WIDTH as f64, PICKER_MENU_MIN_HEIGHT as f64)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .visible(false)
+        .focused(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .build()
+        .map_err(|error| format!("Could not build picker window: {error}"))
+}
+
+fn hide_picker_window_internal(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(PICKER_WINDOW_LABEL) {
+        window
+            .hide()
+            .map_err(|error| format!("Could not hide picker window: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn store_picker_session(state: &PickerState, session: PickerSession) -> Result<(), String> {
+    let mut current = state
+        .session
+        .lock()
+        .map_err(|_| "Picker state lock was poisoned.".to_string())?;
+    *current = Some(session);
+    Ok(())
+}
+
+fn build_picker_session(
+    config: &AppConfig,
+    url: &str,
+    source: PickerLaunchSource,
+    reason: &str,
+) -> Result<PickerSession, String> {
+    let normalized_url = normalize_http_url(url)?.to_string();
+    let running = running_processes().unwrap_or_default();
+
+    let browsers = config
+        .browsers
+        .iter()
+        .filter(|browser| !browser.is_hidden)
+        .map(|browser| PickerBrowserEntry {
+            id: browser.id.clone(),
+            name: browser.name.clone(),
+            private_flag: browser.private_flag.clone(),
+            is_default: config
+                .default_browser_id
+                .as_ref()
+                .is_some_and(|default_id| default_id == &browser.id),
+            is_running: is_browser_running(browser, &running),
+        })
+        .collect();
+
+    Ok(PickerSession {
+        url: normalized_url,
+        reason: reason.to_string(),
+        source,
+        disable_transparency: config.disable_transparency,
+        always_show_picker: config.always_show_picker,
+        browsers,
+    })
+}
+
+fn show_picker_window(
+    app: &AppHandle,
+    state: &PickerState,
+    config: &AppConfig,
+    url: &str,
+    source: PickerLaunchSource,
+    reason: &str,
+) -> Result<(), String> {
+    let session = build_picker_session(config, url, source, reason)?;
+    store_picker_session(state, session.clone())?;
+
+    let window = ensure_picker_window(app)?;
+    let menu_height = picker_window_height(session.browsers.len());
+    window
+        .set_size(Size::Physical(PhysicalSize::new(PICKER_MENU_WIDTH, menu_height)))
+        .map_err(|error| format!("Could not resize picker window: {error}"))?;
+
+    if let Some((cursor_x, cursor_y)) = current_cursor_position() {
+        let (x, y) = picker_window_position(app, cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height);
+        window
+            .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+            .map_err(|error| format!("Could not move picker window: {error}"))?;
+    } else {
+        let _ = window.center();
+    }
+
+    window
+        .show()
+        .map_err(|error| format!("Could not show picker window: {error}"))?;
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    app.emit_to(PICKER_WINDOW_LABEL, PICKER_SESSION_EVENT, session)
+        .map_err(|error| format!("Could not emit picker state: {error}"))?;
+
+    Ok(())
+}
+
+fn handle_incoming_url(
+    app: &AppHandle,
+    state: &PickerState,
+    url: &str,
+) -> Result<RouteDecision, String> {
     let config = load_or_init_config(app, false)?;
+
+    if is_ctrl_shift_picker_trigger_active() {
+        let decision = picker_decision("ctrl_shift_click");
+        show_picker_window(
+            app,
+            state,
+            &config,
+            url,
+            PickerLaunchSource::Route,
+            &decision.reason,
+        )?;
+        return Ok(decision);
+    }
+
     let decision = resolve_route(&config, url)?;
 
     if decision.action == RouteAction::OpenBrowser {
+        hide_picker_window_internal(app)?;
         if let Some(browser_id) = decision.browser_id.as_deref() {
             open_url_with_browser(&config, browser_id, url, decision.private_mode)?;
         }
     } else {
-        // Picker is not implemented yet. For now, surface Settings as fallback.
-        show_settings_window(app);
+        show_picker_window(
+            app,
+            state,
+            &config,
+            url,
+            PickerLaunchSource::Route,
+            &decision.reason,
+        )?;
     }
 
     Ok(decision)
@@ -1266,9 +1640,11 @@ pub fn run() {
     let initial_args: Vec<String> = std::env::args().collect();
 
     tauri::Builder::default()
+        .manage(PickerState::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(url) = extract_url_from_args(&args) {
-                if let Err(error) = handle_incoming_url(&app, &url) {
+                let state = app.state::<PickerState>();
+                if let Err(error) = handle_incoming_url(&app, &state, &url) {
                     eprintln!("Hops could not handle incoming URL '{url}': {error}");
                 }
             } else {
@@ -1280,13 +1656,18 @@ pub fn run() {
                 eprintln!("{error}");
             }
 
+            if let Err(error) = ensure_picker_window(&app.handle()) {
+                eprintln!("{error}");
+            }
+
             let startup_url = extract_url_from_args(&initial_args);
 
             if let Some(url) = startup_url {
-                if let Err(error) = handle_incoming_url(&app.handle(), &url) {
+                hide_settings_window(&app.handle());
+                let state = app.state::<PickerState>();
+                if let Err(error) = handle_incoming_url(&app.handle(), &state, &url) {
                     eprintln!("Hops could not process startup URL '{url}': {error}");
                 }
-                app.handle().exit(0);
             } else {
                 match load_or_init_config(&app.handle(), true) {
                     Ok(config) if config.onboarding_completed => hide_settings_window(&app.handle()),
@@ -1301,13 +1682,19 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() != "main" {
-                return;
-            }
-
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match (window.label(), event) {
+                ("main", WindowEvent::CloseRequested { api, .. }) => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                (PICKER_WINDOW_LABEL, WindowEvent::CloseRequested { api, .. }) => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                (PICKER_WINDOW_LABEL, WindowEvent::Focused(false)) => {
+                    let _ = window.hide();
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1320,6 +1707,10 @@ pub fn run() {
             route_and_open,
             route_and_open_with_config,
             open_url,
+            get_picker_state,
+            show_picker_for_url,
+            hide_picker_window,
+            show_settings_window_command,
             open_windows_default_apps,
             get_browser_registration_status,
             register_hops_as_browser,
@@ -1331,7 +1722,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuleConfig, RulePatternType, rule_matches};
+    use super::{RuleConfig, RulePatternType, default_private_flag, rule_matches};
 
     fn test_rule(pattern_type: RulePatternType, pattern: &str) -> RuleConfig {
         RuleConfig {
@@ -1370,5 +1761,20 @@ mod tests {
         let rule = test_rule(RulePatternType::Regex, r"^https?://(www\.)?youtube\.com/watch");
         assert!(rule_matches(&rule, "https://youtube.com/watch?v=abc"));
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
+    }
+
+    #[test]
+    fn chromium_family_gets_incognito_flag() {
+        assert_eq!(default_private_flag("chrome"), Some("--incognito".to_string()));
+        assert_eq!(default_private_flag("vivaldi"), Some("--incognito".to_string()));
+        assert_eq!(default_private_flag("brave"), Some("--incognito".to_string()));
+    }
+
+    #[test]
+    fn firefox_family_gets_private_window_flag() {
+        assert_eq!(default_private_flag("firefox"), Some("--private-window".to_string()));
+        assert_eq!(default_private_flag("librewolf"), Some("--private-window".to_string()));
+        assert_eq!(default_private_flag("waterfox"), Some("--private-window".to_string()));
+        assert_eq!(default_private_flag("floorp"), Some("--private-window".to_string()));
     }
 }

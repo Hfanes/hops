@@ -63,3 +63,22 @@ export interface BrowserRegistrationStatus {
   currentHttpProgId: string | null;
   currentHttpsProgId: string | null;
 }
+
+export type PickerLaunchSource = "route" | "manual";
+
+export interface PickerBrowserEntry {
+  id: string;
+  name: string;
+  privateFlag: string | null;
+  isDefault: boolean;
+  isRunning: boolean;
+}
+
+export interface PickerSession {
+  url: string;
+  reason: string;
+  source: PickerLaunchSource;
+  disableTransparency: boolean;
+  alwaysShowPicker: boolean;
+  browsers: PickerBrowserEntry[];
+}

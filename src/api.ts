@@ -3,6 +3,7 @@ import type {
   AppConfig,
   BrowserRegistrationStatus,
   OpenUrlRequest,
+  PickerSession,
   RouteDecision,
 } from "./types";
 
@@ -40,6 +41,22 @@ export function routeAndOpenWithConfig(config: AppConfig, url: string): Promise<
 
 export function openUrl(request: OpenUrlRequest): Promise<void> {
   return invoke<void>("open_url", { request });
+}
+
+export function getPickerState(): Promise<PickerSession | null> {
+  return invoke<PickerSession | null>("get_picker_state");
+}
+
+export function showPickerForUrl(url: string): Promise<void> {
+  return invoke<void>("show_picker_for_url", { url });
+}
+
+export function hidePickerWindow(): Promise<void> {
+  return invoke<void>("hide_picker_window");
+}
+
+export function showSettingsWindow(): Promise<void> {
+  return invoke<void>("show_settings_window_command");
 }
 
 export function openWindowsDefaultApps(): Promise<void> {

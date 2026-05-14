@@ -232,6 +232,17 @@ select {
   color: #3f5878;
 }
 
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.settings-actions .setting-help {
+  margin-top: 0;
+}
+
 .inline-save-state {
   margin-top: -0.1rem;
 }

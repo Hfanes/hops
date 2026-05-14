@@ -9,6 +9,7 @@ import {
   refreshBrowsers,
   routeAndOpenWithConfig,
   saveConfig,
+  showPickerForUrl,
   unregisterHopsAsBrowser,
 } from "./api";
 import type {
@@ -34,6 +35,13 @@ interface BrowserDraft {
   name: string;
   path: string;
   privateFlag: string;
+}
+
+interface SettingsDraft {
+  alwaysShowPicker: boolean;
+  useDefaultsWhenNotRunning: boolean;
+  disableTransparency: boolean;
+  defaultBrowserId: string;
 }
 
 interface StatusState {
@@ -218,6 +226,15 @@ function cloneSet(values: Set<string>) {
   return new Set(values);
 }
 
+function settingsDraftFromConfig(config: AppConfig): SettingsDraft {
+  return {
+    alwaysShowPicker: config.alwaysShowPicker,
+    useDefaultsWhenNotRunning: config.useDefaultsWhenNotRunning,
+    disableTransparency: config.disableTransparency,
+    defaultBrowserId: config.defaultBrowserId ?? "",
+  };
+}
+
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
@@ -230,6 +247,7 @@ function App() {
   const [registrationStatus, setRegistrationStatus] = useState<BrowserRegistrationStatus | null>(null);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
   const [dirtyRuleIds, setDirtyRuleIds] = useState<Set<string>>(new Set());
   const [savingRuleIds, setSavingRuleIds] = useState<Set<string>>(new Set());
   const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(new Set());
@@ -268,6 +286,7 @@ function App() {
         const loaded = await loadConfig();
         configRef.current = loaded;
         setConfig(loaded);
+        setSettingsDraft(settingsDraftFromConfig(loaded));
         setStatus({ kind: "success", text: "Configuration loaded." });
 
         const runningIds = await listRunningBrowserIds();
@@ -288,6 +307,14 @@ function App() {
     () => config?.browsers.filter((browser) => !browser.isHidden) ?? [],
     [config],
   );
+
+  const hasUnsavedSettings =
+    !!config &&
+    !!settingsDraft &&
+    (settingsDraft.alwaysShowPicker !== config.alwaysShowPicker ||
+      settingsDraft.useDefaultsWhenNotRunning !== config.useDefaultsWhenNotRunning ||
+      settingsDraft.disableTransparency !== config.disableTransparency ||
+      settingsDraft.defaultBrowserId !== (config.defaultBrowserId ?? ""));
 
   useEffect(() => {
     if (!visibleBrowsers.length) {
@@ -348,6 +375,7 @@ function App() {
         const saved = await saveConfig(nextConfig);
         configRef.current = saved;
         setConfig(saved);
+        setSettingsDraft(settingsDraftFromConfig(saved));
         options?.onSuccess?.(saved);
         if (options?.successText) {
           setStatus({ kind: "success", text: options.successText });
@@ -489,14 +517,21 @@ function App() {
     });
   }
 
-  function updateSetting(transform: (current: AppConfig) => AppConfig, successText: string) {
-    const nextConfig = applyConfigChange(transform);
-    if (!nextConfig) {
+  async function handleSaveSettings() {
+    if (!config || !settingsDraft || !hasUnsavedSettings) {
       return;
     }
 
-    void persistConfig(nextConfig, {
-      successText,
+    const nextConfig: AppConfig = {
+      ...config,
+      alwaysShowPicker: settingsDraft.alwaysShowPicker,
+      useDefaultsWhenNotRunning: settingsDraft.useDefaultsWhenNotRunning,
+      disableTransparency: settingsDraft.disableTransparency,
+      defaultBrowserId: settingsDraft.defaultBrowserId || null,
+    };
+
+    await persistConfig(nextConfig, {
+      successText: "Settings saved.",
       errorPrefix: "Could not save settings",
     });
   }
@@ -877,9 +912,10 @@ function App() {
           text: `Opened in ${decision.browserName ?? "selected browser"}.`,
         });
       } else if (openImmediately && decision.action === "show_picker") {
+        await showPickerForUrl(routeInput.trim());
         setStatus({
-          kind: "warning",
-          text: "Routing requires the picker, and the picker window is not implemented yet.",
+          kind: "success",
+          text: "Routing requires the picker. The picker window was opened.",
         });
       } else {
         setStatus({ kind: "success", text: "Routing preview updated." });
@@ -1165,12 +1201,16 @@ function App() {
             <label className="toggle">
               <input
                 type="checkbox"
-                checked={config.alwaysShowPicker}
+                checked={settingsDraft?.alwaysShowPicker ?? false}
                 onChange={(event) => {
-                  const alwaysShowPicker = event.currentTarget.checked;
-                  updateSetting(
-                    (current) => ({ ...current, alwaysShowPicker }),
-                    "Picker preference saved.",
+                  const checked = event.currentTarget.checked;
+                  setSettingsDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          alwaysShowPicker: checked,
+                        }
+                      : current,
                   );
                 }}
               />
@@ -1183,15 +1223,16 @@ function App() {
             <label className="toggle">
               <input
                 type="checkbox"
-                checked={config.useDefaultsWhenNotRunning}
+                checked={settingsDraft?.useDefaultsWhenNotRunning ?? false}
                 onChange={(event) => {
-                  const useDefaultsWhenNotRunning = event.currentTarget.checked;
-                  updateSetting(
-                    (current) => ({
-                      ...current,
-                      useDefaultsWhenNotRunning,
-                    }),
-                    "Fallback browser behavior saved.",
+                  const checked = event.currentTarget.checked;
+                  setSettingsDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          useDefaultsWhenNotRunning: checked,
+                        }
+                      : current,
                   );
                 }}
               />
@@ -1204,15 +1245,16 @@ function App() {
             <label className="toggle">
               <input
                 type="checkbox"
-                checked={config.disableTransparency}
+                checked={settingsDraft?.disableTransparency ?? false}
                 onChange={(event) => {
-                  const disableTransparency = event.currentTarget.checked;
-                  updateSetting(
-                    (current) => ({
-                      ...current,
-                      disableTransparency,
-                    }),
-                    "Picker appearance saved.",
+                  const checked = event.currentTarget.checked;
+                  setSettingsDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          disableTransparency: checked,
+                        }
+                      : current,
                   );
                 }}
               />
@@ -1225,15 +1267,16 @@ function App() {
             <label>
               Default browser
               <select
-                value={config.defaultBrowserId ?? ""}
+                value={settingsDraft?.defaultBrowserId ?? ""}
                 onChange={(event) => {
-                  const defaultBrowserId = event.currentTarget.value || null;
-                  updateSetting(
-                    (current) => ({
-                      ...current,
-                      defaultBrowserId,
-                    }),
-                    "Default browser saved.",
+                  const value = event.currentTarget.value;
+                  setSettingsDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          defaultBrowserId: value,
+                        }
+                      : current,
                   );
                 }}
               >
@@ -1245,6 +1288,13 @@ function App() {
                 ))}
               </select>
             </label>
+
+            <div className="settings-actions">
+              <button type="button" onClick={() => void handleSaveSettings()} disabled={!hasUnsavedSettings || isSaving}>
+                {isSaving ? "Saving..." : "Save settings"}
+              </button>
+              {hasUnsavedSettings ? <p className="setting-help">You have unsaved settings changes.</p> : null}
+            </div>
 
             <div className="inline-actions">
               <button type="button" className="secondary" onClick={openDefaultAppsSettings}>
