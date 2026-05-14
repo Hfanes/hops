@@ -11,7 +11,6 @@ function supportsPrivateMode(privateFlag: string | null) {
 }
 
 function PickerWindow() {
-  const pickerWindow = getCurrentWindow();
   const [session, setSession] = useState<PickerSession | null>(null);
   const [statusText, setStatusText] = useState("");
   const [isOpening, setIsOpening] = useState(false);
@@ -25,19 +24,35 @@ function PickerWindow() {
   }, []);
 
   useEffect(() => {
-    let mounted = true;
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const pickerWindow = getCurrentWindow();
+
+    const applySession = (next: PickerSession) => {
+      setSession(next);
+      setStatusText("");
+      setIsAltPressed(next.altPressed);
+    };
+
+    const registerUnlistener = (unlisten: () => void) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+
+      unlisteners.push(unlisten);
+    };
 
     const load = async () => {
       try {
         const next = await getPickerState();
-        if (!mounted || !next) {
+        if (disposed || !next) {
           return;
         }
 
-        setSession(next);
-        setStatusText("");
+        applySession(next);
       } catch (error) {
-        if (!mounted) {
+        if (disposed) {
           return;
         }
 
@@ -48,27 +63,29 @@ function PickerWindow() {
 
     void load();
 
-    let unlistenSession: (() => void) | undefined;
-    let unlistenFocus: (() => void) | undefined;
-
     void pickerWindow
       .listen<PickerSession>(PICKER_SESSION_EVENT, (event) => {
-        setSession(event.payload);
-        setStatusText("");
+        applySession(event.payload);
         setIsOpening(false);
       })
-      .then((unlisten) => {
-        unlistenSession = unlisten;
+      .then(registerUnlistener)
+      .catch((error) => {
+        if (!disposed) {
+          setStatusText(error instanceof Error ? error.message : String(error));
+        }
       });
 
     void pickerWindow
       .onFocusChanged(({ payload }) => {
         if (!payload) {
-          void hidePickerWindow();
+          setIsAltPressed(false);
         }
       })
-      .then((unlisten) => {
-        unlistenFocus = unlisten;
+      .then(registerUnlistener)
+      .catch((error) => {
+        if (!disposed) {
+          setStatusText(error instanceof Error ? error.message : String(error));
+        }
       });
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -97,14 +114,15 @@ function PickerWindow() {
     window.addEventListener("blur", onWindowBlur);
 
     return () => {
-      mounted = false;
-      unlistenSession?.();
-      unlistenFocus?.();
+      disposed = true;
+      unlisteners.forEach((unlisten) => {
+        unlisten();
+      });
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [pickerWindow]);
+  }, []);
 
   async function handleOpen(browserId: string, privateMode: boolean) {
     if (!session) {

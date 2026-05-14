@@ -80,5 +80,6 @@ export interface PickerSession {
   source: PickerLaunchSource;
   disableTransparency: boolean;
   alwaysShowPicker: boolean;
+  altPressed: boolean;
   browsers: PickerBrowserEntry[];
 }
