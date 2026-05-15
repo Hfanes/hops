@@ -1190,15 +1190,15 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
   }
 
-  const shellClassName = "min-h-screen bg-[var(--h-bg)] p-0 md:p-3.5";
-  const panelClassName = `grid min-h-screen overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)] ${
+  const shellClassName = "h-screen overflow-hidden bg-[var(--h-bg)] p-0 md:p-3.5";
+  const panelClassName = `grid h-screen overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)] ${
     isSidebarCollapsed
       ? "grid-cols-[54px_minmax(0,1fr)]"
       : "grid-cols-[168px_minmax(0,1fr)]"
   }`;
   const sidebarClassName =
-    "flex min-h-full flex-col gap-3 border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
-  const contentClassName = "min-w-0 overflow-auto p-3.5 md:p-[18px]";
+    "flex h-full min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
+  const contentClassName = "h-full min-h-0 min-w-0 overflow-auto p-3.5 md:p-[18px]";
   const topbarClassName =
     "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
 
@@ -1504,7 +1504,7 @@ function App() {
   if (isLoading) {
     return (
       <main className={shellClassName}>
-        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
+        <section className="h-full overflow-auto border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:shadow-[4px_4px_0_var(--h-shadow)]">
           <h1>Hops</h1>
           <p>Loading configuration...</p>
         </section>
@@ -1515,7 +1515,7 @@ function App() {
   if (!config) {
     return (
       <main className={shellClassName}>
-        <section className="min-h-screen border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:min-h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]">
+        <section className="h-full overflow-auto border border-[var(--h-border)] bg-[var(--h-bg)] p-[18px] md:shadow-[4px_4px_0_var(--h-shadow)]">
           <h1>Hops</h1>
           <p>
             Could not load configuration. Check the status banner and try again.
