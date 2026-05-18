@@ -16,6 +16,7 @@ import {
 } from "react-icons/fi";
 import {
   getBrowserRegistrationStatus,
+  getStartWithWindowsEnabled,
   listRunningBrowserIds,
   loadConfig,
   openWindowsDefaultApps,
@@ -25,6 +26,7 @@ import {
   resetConfig,
   routeAndOpenWithConfig,
   saveConfig,
+  setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showPickerForUrl,
   unregisterHopsAsBrowser,
 } from "./api";
@@ -347,7 +349,14 @@ function App() {
   );
   const [registrationStatus, setRegistrationStatus] =
     useState<BrowserRegistrationStatus | null>(null);
+  const [startWithWindowsEnabled, setStartWithWindowsEnabled] = useState<
+    boolean | null
+  >(null);
+  const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
+    useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
+    useState(true);
   const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(
     null,
@@ -430,6 +439,7 @@ function App() {
         const runningIds = await listRunningBrowserIds();
         setRunningBrowserIds(new Set(runningIds));
         await refreshRegistrationStatus();
+        await refreshStartWithWindowsStatus();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setStatus({ kind: "error", text: `Failed to load config: ${message}` });
@@ -724,6 +734,46 @@ function App() {
       setRegistrationStatus(next);
     } catch {
       setRegistrationStatus(null);
+    }
+  }
+
+  async function refreshStartWithWindowsStatus() {
+    try {
+      const enabled = await getStartWithWindowsEnabled();
+      setStartWithWindowsEnabled(enabled);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStartWithWindowsEnabled(null);
+      setStatus({
+        kind: "warning",
+        text: `Could not read Start with Windows status: ${message}`,
+      });
+    }
+  }
+
+  async function updateStartWithWindows(checked: boolean) {
+    const previous = startWithWindowsEnabled;
+    setStartWithWindowsEnabled(checked);
+    setIsUpdatingStartWithWindows(true);
+
+    try {
+      const enabled = await saveStartWithWindowsEnabled(checked);
+      setStartWithWindowsEnabled(enabled);
+      setStatus({
+        kind: "success",
+        text: enabled
+          ? "Hops will start when you sign in."
+          : "Hops will not start when you sign in.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStartWithWindowsEnabled(previous);
+      setStatus({
+        kind: "error",
+        text: `Could not update Start with Windows: ${message}`,
+      });
+    } finally {
+      setIsUpdatingStartWithWindows(false);
     }
   }
 
@@ -1082,11 +1132,18 @@ function App() {
 
     setIsFinishingOnboarding(true);
     try {
+      const enabled = await saveStartWithWindowsEnabled(
+        onboardingStartWithWindows,
+      );
+      setStartWithWindowsEnabled(enabled);
+
       const saved = await saveConfig(nextConfig);
       applyLoadedConfig(saved);
       setStatus({
         kind: "success",
-        text: "Onboarding completed. Hops will now start minimized to tray.",
+        text: onboardingStartWithWindows
+          ? "Onboarding completed. Hops will start with Windows and stay in tray."
+          : "Onboarding completed. Hops will stay in tray when opened.",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1799,6 +1856,23 @@ function App() {
                   Hops will keep running in tray and process external links in
                   the background.
                 </p>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={onboardingStartWithWindows}
+                    onChange={(event) =>
+                      setOnboardingStartWithWindows(
+                        event.currentTarget.checked,
+                      )
+                    }
+                    disabled={isFinishingOnboarding}
+                  />
+                  <span>Start with Windows</span>
+                </label>
+                <p className="setting-help">
+                  Launch Hops when you sign in. After setup, it starts hidden in
+                  the tray.
+                </p>
                 {!registrationStatus?.isFullyDefault ? (
                   <p className="status warning">
                     Hops is not yet default for both HTTP and HTTPS. You can
@@ -1884,6 +1958,22 @@ function App() {
 
           {activeTab === "settings" ? (
             <section className="tab-body">
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={startWithWindowsEnabled ?? false}
+                  onChange={(event) =>
+                    void updateStartWithWindows(event.currentTarget.checked)
+                  }
+                  disabled={isUpdatingStartWithWindows}
+                />
+                <span>Start with Windows</span>
+              </label>
+              <p className="setting-help">
+                Launch Hops when you sign in. Hops starts hidden in the tray
+                after onboarding.
+              </p>
+
               <label className="toggle">
                 <input
                   type="checkbox"
