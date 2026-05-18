@@ -182,14 +182,18 @@ function PickerWindow() {
           {session?.browsers.length ? (
             session.browsers.map((browser) => {
               const supportsPrivate = supportsPrivateMode(browser.privateFlag);
-              const opensPrivate = isAltPressed && supportsPrivate;
+              const usesRoutePrivate = session.preferredPrivateMode;
+              const opensPrivate =
+                supportsPrivate && (isAltPressed || usesRoutePrivate);
               return (
                 <button
                   key={browser.id}
                   type="button"
                   className={`picker-menu-item ${browser.isRunning ? "is-running" : ""} ${opensPrivate ? "private-mode" : ""}`}
                   onClick={(event) => {
-                    const requestPrivate = supportsPrivate && (isAltPressed || event.altKey);
+                    const requestPrivate =
+                      supportsPrivate &&
+                      (isAltPressed || event.altKey || usesRoutePrivate);
                     void handleOpen(browser.id, requestPrivate);
                   }}
                   disabled={isOpening}
