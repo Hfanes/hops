@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 import type {
   AppConfig,
   BrowserRegistrationStatus,
@@ -85,4 +90,23 @@ export function registerHopsAsBrowser(): Promise<BrowserRegistrationStatus> {
 
 export function unregisterHopsAsBrowser(): Promise<BrowserRegistrationStatus> {
   return invoke<BrowserRegistrationStatus>("unregister_hops_as_browser");
+}
+
+export function getStartWithWindowsEnabled(): Promise<boolean> {
+  return isAutostartEnabled();
+}
+
+export async function setStartWithWindowsEnabled(
+  enabled: boolean,
+): Promise<boolean> {
+  if (enabled) {
+    await enableAutostart();
+  } else {
+    if (!(await isAutostartEnabled())) {
+      return false;
+    }
+    await disableAutostart();
+  }
+
+  return isAutostartEnabled();
 }

@@ -4,6 +4,9 @@
   "description": "Capability for the main and picker windows",
   "windows": ["main", "picker"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }
