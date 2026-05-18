@@ -1196,7 +1196,11 @@ function App() {
         });
       } else if (openImmediately && decision.action === "show_picker") {
         await rejectAfter(
-          showPickerForUrl(trimmedRouteInput),
+          showPickerForUrl(
+            trimmedRouteInput,
+            decision.browserId,
+            decision.privateMode,
+          ),
           ROUTE_OPEN_TIMEOUT_MS,
           "Opening the picker timed out after 10 seconds.",
         );

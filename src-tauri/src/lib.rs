@@ -248,6 +248,8 @@ struct PickerSession {
     url: String,
     reason: String,
     source: PickerLaunchSource,
+    preferred_browser_id: Option<String>,
+    preferred_private_mode: bool,
     disable_transparency: bool,
     theme_preference: ThemePreference,
     always_show_picker: bool,
@@ -366,6 +368,8 @@ fn show_picker_for_url(
     app: AppHandle,
     state: State<'_, PickerState>,
     url: String,
+    preferred_browser_id: Option<String>,
+    preferred_private_mode: Option<bool>,
 ) -> Result<(), String> {
     let config = load_or_init_config(&app, false)?;
     show_picker_window(
@@ -375,6 +379,8 @@ fn show_picker_for_url(
         &url,
         PickerLaunchSource::Manual,
         "manual_open",
+        preferred_browser_id.as_deref(),
+        preferred_private_mode.unwrap_or(false),
     )
 }
 
@@ -1401,18 +1407,28 @@ fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String>
                     {
                         return Ok(open_decision(
                             default_browser,
-                            false,
+                            rule.private_mode,
                             Some(rule.id.clone()),
                             "rule_browser_not_running_use_default",
                         ));
                     }
                 }
 
-                return Ok(picker_decision("rule_browser_not_running_no_default"));
+                return Ok(picker_decision_for_browser(
+                    browser,
+                    rule.private_mode,
+                    Some(rule.id.clone()),
+                    "rule_browser_not_running_no_default",
+                ));
             }
         }
 
-        return Ok(picker_decision("rule_browser_not_running"));
+        return Ok(picker_decision_for_browser(
+            browser,
+            rule.private_mode,
+            Some(rule.id.clone()),
+            "rule_browser_not_running",
+        ));
     }
 
     if let Some(default_browser_id) = config.default_browser_id.as_ref() {
@@ -1521,6 +1537,22 @@ fn picker_decision(reason: &str) -> RouteDecision {
         browser_name: None,
         private_mode: false,
         matched_rule_id: None,
+    }
+}
+
+fn picker_decision_for_browser(
+    browser: &BrowserConfig,
+    private_mode: bool,
+    matched_rule_id: Option<String>,
+    reason: &str,
+) -> RouteDecision {
+    RouteDecision {
+        action: RouteAction::ShowPicker,
+        reason: reason.to_string(),
+        browser_id: Some(browser.id.clone()),
+        browser_name: Some(browser.name.clone()),
+        private_mode,
+        matched_rule_id,
     }
 }
 
@@ -1790,6 +1822,8 @@ fn build_picker_session(
     url: &str,
     source: PickerLaunchSource,
     reason: &str,
+    preferred_browser_id: Option<&str>,
+    preferred_private_mode: bool,
 ) -> Result<PickerSession, String> {
     let normalized_url = normalize_http_url(url)?.to_string();
     let running = running_processes().unwrap_or_default();
@@ -1814,6 +1848,8 @@ fn build_picker_session(
         url: normalized_url,
         reason: reason.to_string(),
         source,
+        preferred_browser_id: preferred_browser_id.map(str::to_string),
+        preferred_private_mode,
         disable_transparency: config.disable_transparency,
         theme_preference: config.theme_preference,
         always_show_picker: config.always_show_picker,
@@ -1829,10 +1865,19 @@ fn show_picker_window(
     url: &str,
     source: PickerLaunchSource,
     reason: &str,
+    preferred_browser_id: Option<&str>,
+    preferred_private_mode: bool,
 ) -> Result<(), String> {
     cancel_picker_idle_destroy(state)?;
 
-    let session = build_picker_session(config, url, source, reason)?;
+    let session = build_picker_session(
+        config,
+        url,
+        source,
+        reason,
+        preferred_browser_id,
+        preferred_private_mode,
+    )?;
     store_picker_session(state, session.clone())?;
 
     let window = ensure_picker_window(app)?;
@@ -1881,6 +1926,8 @@ fn handle_incoming_url(
             url,
             PickerLaunchSource::Route,
             &decision.reason,
+            decision.browser_id.as_deref(),
+            decision.private_mode,
         )?;
         return Ok(decision);
     }
@@ -1900,6 +1947,8 @@ fn handle_incoming_url(
             url,
             PickerLaunchSource::Route,
             &decision.reason,
+            decision.browser_id.as_deref(),
+            decision.private_mode,
         )?;
     }
 
@@ -2045,9 +2094,9 @@ mod tests {
     use super::registry_browser_roots;
     use super::{
         build_detected_browser, hydrate_detected_browser_defaults, merge_detected_browsers,
-        reset_config_with_detected_browsers, resolve_browser_metadata, rule_matches,
-        write_config_file, AppConfig, BrowserConfig, BrowserFamily, BrowserSource, RuleConfig,
-        RulePatternType, ThemePreference,
+        reset_config_with_detected_browsers, resolve_browser_metadata, resolve_route, rule_matches,
+        write_config_file, AppConfig, BrowserConfig, BrowserFamily, BrowserSource, RouteAction,
+        RuleConfig, RulePatternType, ThemePreference,
     };
     use std::{
         fs,
@@ -2078,6 +2127,17 @@ mod tests {
             default_browser_id: None,
             browsers,
             rules: Vec::new(),
+        }
+    }
+
+    fn manual_browser(id: &str, name: &str) -> BrowserConfig {
+        BrowserConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: format!("C:\\Tools\\{name}\\browser.exe"),
+            private_flag: Some("--incognito".to_string()),
+            source: BrowserSource::Manual,
+            is_hidden: false,
         }
     }
 
@@ -2116,6 +2176,50 @@ mod tests {
         );
         assert!(rule_matches(&rule, "https://youtube.com/watch?v=abc"));
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
+    }
+
+    #[test]
+    fn private_rule_picker_decision_preserves_rule_browser_and_private_mode() {
+        let browser = manual_browser("brave", "Brave");
+        let mut rule = test_rule(RulePatternType::Hostname, "github.com");
+        rule.browser_id = browser.id.clone();
+        rule.private_mode = true;
+
+        let mut config = test_app_config(vec![browser.clone()]);
+        config.rules.push(rule);
+
+        let decision = resolve_route(&config, "https://github.com/openai/codex")
+            .expect("route should resolve");
+
+        assert_eq!(decision.action, RouteAction::ShowPicker);
+        assert_eq!(decision.browser_id.as_deref(), Some(browser.id.as_str()));
+        assert!(decision.private_mode);
+        assert_eq!(decision.reason, "rule_browser_not_running");
+    }
+
+    #[test]
+    fn private_rule_default_fallback_preserves_private_mode() {
+        let rule_browser = manual_browser("brave", "Brave");
+        let default_browser = manual_browser("chrome", "Chrome");
+        let mut rule = test_rule(RulePatternType::Hostname, "github.com");
+        rule.browser_id = rule_browser.id.clone();
+        rule.private_mode = true;
+
+        let mut config = test_app_config(vec![rule_browser, default_browser.clone()]);
+        config.use_defaults_when_not_running = true;
+        config.default_browser_id = Some(default_browser.id.clone());
+        config.rules.push(rule);
+
+        let decision = resolve_route(&config, "https://github.com/openai/codex")
+            .expect("route should resolve");
+
+        assert_eq!(decision.action, RouteAction::OpenBrowser);
+        assert_eq!(
+            decision.browser_id.as_deref(),
+            Some(default_browser.id.as_str())
+        );
+        assert!(decision.private_mode);
+        assert_eq!(decision.reason, "rule_browser_not_running_use_default");
     }
 
     #[test]

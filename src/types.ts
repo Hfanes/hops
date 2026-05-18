@@ -80,6 +80,8 @@ export interface PickerSession {
   url: string;
   reason: string;
   source: PickerLaunchSource;
+  preferredBrowserId: string | null;
+  preferredPrivateMode: boolean;
   disableTransparency: boolean;
   themePreference: ThemePreference;
   alwaysShowPicker: boolean;

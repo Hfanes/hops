@@ -51,8 +51,16 @@ export function getPickerState(): Promise<PickerSession | null> {
   return invoke<PickerSession | null>("get_picker_state");
 }
 
-export function showPickerForUrl(url: string): Promise<void> {
-  return invoke<void>("show_picker_for_url", { url });
+export function showPickerForUrl(
+  url: string,
+  preferredBrowserId: string | null = null,
+  preferredPrivateMode = false,
+): Promise<void> {
+  return invoke<void>("show_picker_for_url", {
+    url,
+    preferredBrowserId,
+    preferredPrivateMode,
+  });
 }
 
 export function hidePickerWindow(): Promise<void> {
