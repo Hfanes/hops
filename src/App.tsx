@@ -71,6 +71,7 @@ type SettingsActionPanel = "none" | "reset" | "rerun-onboarding";
 type FormModal = "manual-browser" | "rule" | null;
 
 const EMPTY_STATUS: StatusState = { kind: "idle", text: "" };
+const ROUTE_OPEN_TIMEOUT_MS = 10_000;
 
 const NAV_ITEMS: Array<{ id: TabId; label: string; icon: IconType }> = [
   { id: "settings", label: "Settings", icon: FiSettings },
@@ -306,6 +307,27 @@ function applySettingsDraft(
     themePreference: settingsDraft.themePreference,
     defaultBrowserId: settingsDraft.defaultBrowserId || null,
   };
+}
+
+function rejectAfter<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      const error = new Error(message);
+      error.name = "TimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  });
 }
 
 function App() {
@@ -1157,9 +1179,14 @@ function App() {
 
     setIsRouting(true);
     try {
+      const trimmedRouteInput = routeInput.trim();
       const decision = openImmediately
-        ? await routeAndOpenWithConfig(config, routeInput.trim())
-        : await previewRouteWithConfig(config, routeInput.trim());
+        ? await rejectAfter(
+            routeAndOpenWithConfig(config, trimmedRouteInput),
+            ROUTE_OPEN_TIMEOUT_MS,
+            "Opening the routed browser timed out after 10 seconds.",
+          )
+        : await previewRouteWithConfig(config, trimmedRouteInput);
 
       setRouteDecision(decision);
       if (openImmediately && decision.action === "open_browser") {
@@ -1168,7 +1195,11 @@ function App() {
           text: `Opened in ${decision.browserName ?? "selected browser"}.`,
         });
       } else if (openImmediately && decision.action === "show_picker") {
-        await showPickerForUrl(routeInput.trim());
+        await rejectAfter(
+          showPickerForUrl(trimmedRouteInput),
+          ROUTE_OPEN_TIMEOUT_MS,
+          "Opening the picker timed out after 10 seconds.",
+        );
         setStatus({
           kind: "success",
           text: "Routing requires the picker. The picker window was opened.",
@@ -1180,6 +1211,11 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
+      if (openImmediately && error instanceof Error && error.name === "TimeoutError") {
+        window.alert(
+          `Hops could not open the route within 10 seconds.\n\n${message}`,
+        );
+      }
     } finally {
       setIsRouting(false);
     }

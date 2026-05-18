@@ -271,7 +271,7 @@ fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
     save_config_internal(&app, config, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn refresh_browsers(app: AppHandle) -> Result<AppConfig, String> {
     let mut config = load_or_init_config(&app, false)?;
     merge_detected_browsers(&mut config, detect_browsers());
@@ -284,7 +284,7 @@ fn reset_config(app: AppHandle) -> Result<AppConfig, String> {
     save_config_internal(&app, config, false)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, String> {
     let config = load_or_init_config(&app, false)?;
     let running = running_processes()?;
@@ -297,13 +297,13 @@ fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, String> {
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_route(app: AppHandle, url: String) -> Result<RouteDecision, String> {
     let config = load_or_init_config(&app, false)?;
     resolve_route(&config, &url)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_route_with_config(config: AppConfig, url: String) -> Result<RouteDecision, String> {
     let mut normalized = config;
     normalize_config(&mut normalized);
@@ -311,7 +311,7 @@ fn preview_route_with_config(config: AppConfig, url: String) -> Result<RouteDeci
     resolve_route(&normalized, &url)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn route_and_open(app: AppHandle, url: String) -> Result<RouteDecision, String> {
     let config = load_or_init_config(&app, false)?;
     let decision = resolve_route(&config, &url)?;
@@ -325,7 +325,7 @@ fn route_and_open(app: AppHandle, url: String) -> Result<RouteDecision, String> 
     Ok(decision)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn route_and_open_with_config(config: AppConfig, url: String) -> Result<RouteDecision, String> {
     let mut normalized = config;
     normalize_config(&mut normalized);
@@ -341,7 +341,7 @@ fn route_and_open_with_config(config: AppConfig, url: String) -> Result<RouteDec
     Ok(decision)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_url(app: AppHandle, request: OpenUrlRequest) -> Result<(), String> {
     let config = load_or_init_config(&app, false)?;
     open_url_with_browser(
@@ -361,7 +361,7 @@ fn get_picker_state(state: State<'_, PickerState>) -> Result<Option<PickerSessio
     Ok(session.clone())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn show_picker_for_url(
     app: AppHandle,
     state: State<'_, PickerState>,
