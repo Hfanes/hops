@@ -26,9 +26,11 @@ Hops writes registration under `HKCU` (current user) so:
 - Rule enable/disable toggle
 - Rule pattern types: hostname, hostname+subdomains, prefix, contains, full URL, glob, regex
 - Routing preview and route-and-open test tools
+- Picker window for manual browser choice when routing needs user input
 - Background tray runtime
 - Single-instance URL activation handling
-- First-run onboarding flow (browser detection, registration, default-app guidance)
+- First-run onboarding flow (browser detection, registration, default-app guidance, optional Start with Windows)
+- Optional Start with Windows setting
 - Register / unregister Hops in Windows Default Apps catalog
 - Registration status checks for `http` and `https` using the effective Windows association API, with registry fallback
 
@@ -44,13 +46,14 @@ Hops evaluates URLs in this order:
 3. Default browser fallback (same running check)
 4. Otherwise -> picker flow
 
-Note: picker UI is not fully implemented yet. When picker would be needed, Settings is shown as fallback.
+The picker opens a small window near the cursor when a route needs user input (CTRL + SHIFT + LEFT CLICK). Holding Alt opens supported browsers in private mode.
 
 ## Lightweight And Performance Choices
 
 - Event-driven URL handling (no constant polling loop)
 - Single-instance plugin prevents duplicate long-lived processes
 - Tray-first behavior keeps UI hidden unless needed
+- Optional Start with Windows launches Hops hidden in the tray after onboarding
 - Windows subsystem is configured as GUI app to avoid console flashes on URL activation
 - Config stored as small JSON file at `%APPDATA%\Hops\config.json`
 - Browser list detection runs on demand (refresh / initial load), not continuously
@@ -75,6 +78,7 @@ On first launch, Hops opens an onboarding flow that guides:
 1. browser detection/manual browser add
 2. registering Hops in Default Apps catalog
 3. opening Windows Default Apps so you set `http` and `https` to Hops
+4. choosing whether Hops starts with Windows
 
 ## Revert / Rollback
 
