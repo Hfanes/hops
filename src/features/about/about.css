@@ -1,0 +1,27 @@
+.about-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.about-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--h-border);
+  background: color-mix(in srgb, var(--h-card) 88%, var(--h-secondary));
+}
+
+.about-row span {
+  color: var(--h-muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.about-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

@@ -88,3 +88,34 @@ export interface PickerSession {
   altPressed: boolean;
   browsers: PickerBrowserEntry[];
 }
+
+export type TabId = "settings" | "browsers" | "rules" | "router" | "about";
+
+export interface RuleDraft {
+  pattern: string;
+  patternType: RulePatternType;
+  browserId: string;
+  privateMode: boolean;
+}
+
+export interface BrowserDraft {
+  name: string;
+  path: string;
+  privateFlag: string;
+}
+
+export interface SettingsDraft {
+  alwaysShowPicker: boolean;
+  useDefaultsWhenNotRunning: boolean;
+  disableTransparency: boolean;
+  themePreference: ThemePreference;
+  defaultBrowserId: string;
+}
+
+export interface StatusState {
+  kind: "idle" | "success" | "error" | "warning";
+  text: string;
+}
+
+export type SettingsActionPanel = "none" | "reset" | "rerun-onboarding";
+export type FormModal = "manual-browser" | "rule" | null;
