@@ -358,6 +358,8 @@ function App() {
   const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
     useState(true);
   const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
+  const [isCheckingOnboardingDefaults, setIsCheckingOnboardingDefaults] =
+    useState(false);
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(
     null,
   );
@@ -732,8 +734,10 @@ function App() {
     try {
       const next = await getBrowserRegistrationStatus();
       setRegistrationStatus(next);
+      return next;
     } catch {
       setRegistrationStatus(null);
+      return null;
     }
   }
 
@@ -1156,6 +1160,24 @@ function App() {
     }
   }
 
+  async function continueToOnboardingFinish() {
+    setIsCheckingOnboardingDefaults(true);
+    try {
+      const next = await refreshRegistrationStatus();
+
+      if (!next) {
+        setStatus({
+          kind: "warning",
+          text: "Could not check Windows HTTP/HTTPS defaults. You can refresh status or finish setup later in Settings.",
+        });
+      }
+
+      setOnboardingStep(3);
+    } finally {
+      setIsCheckingOnboardingDefaults(false);
+    }
+  }
+
   async function handleResetConfig() {
     setIsResettingConfig(true);
     try {
@@ -1293,6 +1315,8 @@ function App() {
       ? "grid-cols-[54px_minmax(0,1fr)]"
       : "grid-cols-[168px_minmax(0,1fr)]"
   }`;
+  const onboardingPanelClassName =
+    "grid h-screen grid-cols-1 overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]";
   const sidebarClassName =
     "flex h-full min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
   const contentClassName = "h-full min-h-0 min-w-0 overflow-auto p-3.5 md:p-[18px]";
@@ -1625,8 +1649,7 @@ function App() {
   if (!config.onboardingCompleted) {
     return (
       <main className={shellClassName}>
-        <section className={panelClassName}>
-          {sidebarNav}
+        <section className={onboardingPanelClassName}>
           <div className={contentClassName} ref={contentAreaRef}>
             <header className={topbarClassName}>
               <div>
@@ -1842,8 +1865,14 @@ function App() {
                   >
                     Back
                   </button>
-                  <button type="button" onClick={() => setOnboardingStep(3)}>
-                    Continue
+                  <button
+                    type="button"
+                    onClick={() => void continueToOnboardingFinish()}
+                    disabled={isCheckingOnboardingDefaults}
+                  >
+                    {isCheckingOnboardingDefaults
+                      ? "Checking..."
+                      : "Continue"}
                   </button>
                 </div>
               </section>
@@ -1900,7 +1929,6 @@ function App() {
                 </div>
               </section>
             ) : null}
-            {topButton}
           </div>
         </section>
       </main>
