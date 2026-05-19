@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { FiCheck, FiExternalLink, FiLock, FiZap } from "react-icons/fi";
-import { getPickerState, hidePickerWindow, openUrl } from "./api";
-import type { PickerSession, ThemePreference } from "./types";
-import "./PickerWindow.css";
+import { FiLock } from "react-icons/fi";
+import { getPickerState, hidePickerWindow, openUrl } from "../../services/tauri";
+import type { PickerSession, ThemePreference } from "../../types";
+import { PickerBrowserList } from "./PickerBrowserList";
+import "../../styles/PickerWindow.css";
 
 const PICKER_SESSION_EVENT = "picker-session";
-
-function supportsPrivateMode(privateFlag: string | null) {
-  return !!privateFlag?.trim();
-}
 
 function applyPickerTheme(themePreference: ThemePreference) {
   document.documentElement.classList.toggle("dark", themePreference === "dark");
@@ -178,57 +175,15 @@ function PickerWindow() {
           </p>
         ) : null}
 
-        <div className="picker-menu-list" role="menu" aria-label="Open URL in browser">
-          {session?.browsers.length ? (
-            session.browsers.map((browser) => {
-              const supportsPrivate = supportsPrivateMode(browser.privateFlag);
-              const usesRoutePrivate = session.preferredPrivateMode;
-              const opensPrivate =
-                supportsPrivate && (isAltPressed || usesRoutePrivate);
-              return (
-                <button
-                  key={browser.id}
-                  type="button"
-                  className={`picker-menu-item ${browser.isRunning ? "is-running" : ""} ${opensPrivate ? "private-mode" : ""}`}
-                  onClick={(event) => {
-                    const requestPrivate =
-                      supportsPrivate &&
-                      (isAltPressed || event.altKey || usesRoutePrivate);
-                    void handleOpen(browser.id, requestPrivate);
-                  }}
-                  disabled={isOpening}
-                >
-                  <span className="picker-menu-item-name">
-                    <FiExternalLink aria-hidden="true" />
-                    {browser.name}
-                  </span>
-                  <span className="picker-menu-item-meta">
-                    {browser.isDefault ? (
-                      <span className="picker-chip">
-                        <FiCheck aria-hidden="true" />
-                        default
-                      </span>
-                    ) : null}
-                    {browser.isRunning ? (
-                      <span className="picker-chip running">
-                        <FiZap aria-hidden="true" />
-                        running
-                      </span>
-                    ) : null}
-                    {opensPrivate ? (
-                      <span className="picker-chip private">
-                        <FiLock aria-hidden="true" />
-                        private
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-              );
-            })
-          ) : (
-            <p className="picker-empty">No browsers are configured.</p>
-          )}
-        </div>
+        <PickerBrowserList
+          browsers={session?.browsers ?? []}
+          disabled={isOpening}
+          isAltPressed={isAltPressed}
+          usesRoutePrivate={session?.preferredPrivateMode ?? false}
+          onOpen={(browserId, privateMode) =>
+            void handleOpen(browserId, privateMode)
+          }
+        />
 
         {statusText ? <p className="picker-status">{statusText}</p> : null}
       </section>

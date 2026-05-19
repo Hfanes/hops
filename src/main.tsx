@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
-import PickerWindow from "./PickerWindow";
+import PickerWindow from "./features/picker/PickerWindow";
 
 function resolveRootComponent() {
   try {
