@@ -56,5 +56,5 @@ jobs:
           prerelease: false
           releaseAssetNamePattern: "hops[ext]"
           uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
+          uploadUpdaterSignatures: false
           updaterJsonPreferNsis: true
