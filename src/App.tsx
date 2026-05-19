@@ -400,13 +400,19 @@ function App() {
   const [isRouting, setIsRouting] = useState(false);
   const isSaving = saveActivityCount > 0;
   const configRef = useRef<AppConfig | null>(null);
+  const settingsDraftRef = useRef<SettingsDraft | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const browserSaveTimersRef = useRef<Record<string, number>>({});
+  const settingsSaveTimerRef = useRef<number | null>(null);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     configRef.current = config;
   }, [config]);
+
+  useEffect(() => {
+    settingsDraftRef.current = settingsDraft;
+  }, [settingsDraft]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -458,16 +464,6 @@ function App() {
     [config],
   );
 
-  const hasUnsavedSettings =
-    !!config &&
-    !!settingsDraft &&
-    (settingsDraft.alwaysShowPicker !== config.alwaysShowPicker ||
-      settingsDraft.useDefaultsWhenNotRunning !==
-        config.useDefaultsWhenNotRunning ||
-      settingsDraft.disableTransparency !== config.disableTransparency ||
-      settingsDraft.themePreference !== config.themePreference ||
-      settingsDraft.defaultBrowserId !== (config.defaultBrowserId ?? ""));
-
   useEffect(() => {
     if (!visibleBrowsers.length) {
       return;
@@ -493,6 +489,9 @@ function App() {
     return () => {
       for (const timerId of Object.values(browserSaveTimersRef.current)) {
         window.clearTimeout(timerId);
+      }
+      if (settingsSaveTimerRef.current !== null) {
+        window.clearTimeout(settingsSaveTimerRef.current);
       }
     };
   }, []);
@@ -526,22 +525,27 @@ function App() {
   }
 
   function applyLoadedConfig(nextConfig: AppConfig) {
+    const nextSettingsDraft = settingsDraftFromConfig(nextConfig);
+
     configRef.current = nextConfig;
+    settingsDraftRef.current = nextSettingsDraft;
     setConfig(nextConfig);
     setTheme(nextConfig.themePreference);
-    setSettingsDraft(settingsDraftFromConfig(nextConfig));
+    setSettingsDraft(nextSettingsDraft);
   }
 
   function updateThemePreference(nextTheme: ThemePreference) {
     setTheme(nextTheme);
-    setSettingsDraft((current) =>
-      current
+    setSettingsDraft((current) => {
+      const nextDraft = current
         ? {
             ...current,
             themePreference: nextTheme,
           }
-        : current,
-    );
+        : current;
+      settingsDraftRef.current = nextDraft;
+      return nextDraft;
+    });
 
     const currentConfig = configRef.current;
     if (!currentConfig || currentConfig.themePreference === nextTheme) {
@@ -557,6 +561,7 @@ function App() {
     setConfig(nextConfig);
     void persistConfig(nextConfig, {
       errorPrefix: "Could not save theme preference",
+      applySavedConfig: false,
     });
   }
 
@@ -568,6 +573,7 @@ function App() {
       onSuccess?: (saved: AppConfig) => void;
       onError?: () => void;
       onSettled?: () => void;
+      applySavedConfig?: boolean;
     },
   ) {
     setSaveActivityCount((count) => count + 1);
@@ -575,7 +581,9 @@ function App() {
     const runSave = async () => {
       try {
         const saved = await saveConfig(nextConfig);
-        applyLoadedConfig(saved);
+        if (options?.applySavedConfig ?? true) {
+          applyLoadedConfig(saved);
+        }
         options?.onSuccess?.(saved);
         if (options?.successText) {
           setStatus({ kind: "success", text: options.successText });
@@ -597,6 +605,40 @@ function App() {
     const queued = saveQueueRef.current.then(runSave, runSave);
     saveQueueRef.current = queued.catch(() => undefined);
     return queued;
+  }
+
+  function scheduleSettingsSave(nextConfig: AppConfig) {
+    if (settingsSaveTimerRef.current !== null) {
+      window.clearTimeout(settingsSaveTimerRef.current);
+    }
+
+    settingsSaveTimerRef.current = window.setTimeout(() => {
+      settingsSaveTimerRef.current = null;
+      void persistConfig(nextConfig, {
+        errorPrefix: "Could not save settings",
+        applySavedConfig: false,
+      });
+    }, 350);
+  }
+
+  function updateSettingsDraft(
+    transform: (current: SettingsDraft) => SettingsDraft,
+  ) {
+    const currentConfig = configRef.current;
+    if (!currentConfig) {
+      return;
+    }
+
+    const currentDraft =
+      settingsDraftRef.current ?? settingsDraftFromConfig(currentConfig);
+    const nextDraft = transform(currentDraft);
+    const nextConfig = applySettingsDraft(currentConfig, nextDraft);
+
+    configRef.current = nextConfig;
+    settingsDraftRef.current = nextDraft;
+    setConfig(nextConfig);
+    setSettingsDraft(nextDraft);
+    scheduleSettingsSave(nextConfig);
   }
 
   function scheduleBrowserSave(browserId: string, nextConfig: AppConfig) {
@@ -714,19 +756,6 @@ function App() {
           return next;
         });
       },
-    });
-  }
-
-  async function handleSaveSettings() {
-    if (!config || !settingsDraft || !hasUnsavedSettings) {
-      return;
-    }
-
-    const nextConfig = applySettingsDraft(config, settingsDraft);
-
-    await persistConfig(nextConfig, {
-      successText: "Settings saved.",
-      errorPrefix: "Could not save settings",
     });
   }
 
@@ -1986,149 +2015,126 @@ function App() {
 
           {activeTab === "settings" ? (
             <section className="tab-body">
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={startWithWindowsEnabled ?? false}
-                  onChange={(event) =>
-                    void updateStartWithWindows(event.currentTarget.checked)
-                  }
-                  disabled={isUpdatingStartWithWindows}
-                />
-                <span>Start with Windows</span>
-              </label>
-              <p className="setting-help">
-                Launch Hops when you sign in. Hops starts hidden in the tray
-                after onboarding.
-              </p>
+              <article className="card">
+                <h3>General</h3>
 
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settingsDraft?.alwaysShowPicker ?? false}
-                  onChange={(event) => {
-                    const checked = event.currentTarget.checked;
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            alwaysShowPicker: checked,
-                          }
-                        : current,
-                    );
-                  }}
-                />
-                <span>Always show picker</span>
-              </label>
-              <p className="setting-help">
-                If enabled, Hops skips rules and default browser and always asks
-                you where to open.
-              </p>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={startWithWindowsEnabled ?? false}
+                    onChange={(event) =>
+                      void updateStartWithWindows(event.currentTarget.checked)
+                    }
+                    disabled={isUpdatingStartWithWindows}
+                  />
+                  <span>Start with Windows</span>
+                </label>
+                <p className="setting-help">
+                  Launch Hops when you sign in. Hops starts hidden in the tray
+                  after onboarding.
+                </p>
 
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settingsDraft?.useDefaultsWhenNotRunning ?? false}
-                  onChange={(event) => {
-                    const checked = event.currentTarget.checked;
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            useDefaultsWhenNotRunning: checked,
-                          }
-                        : current,
-                    );
-                  }}
-                />
-                <span>Use defaults when browser is not already running</span>
-              </label>
-              <p className="setting-help">
-                If disabled and a matched rule browser is closed, Hops goes to
-                picker. If enabled, Hops falls back to your configured default
-                browser.
-              </p>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft?.alwaysShowPicker ?? false}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      updateSettingsDraft((current) => ({
+                        ...current,
+                        alwaysShowPicker: checked,
+                      }));
+                    }}
+                  />
+                  <span>Always show picker</span>
+                </label>
+                <p className="setting-help">
+                  If enabled, Hops skips rules and default browser and always
+                  asks you where to open.
+                </p>
 
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={settingsDraft?.disableTransparency ?? false}
-                  onChange={(event) => {
-                    const checked = event.currentTarget.checked;
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            disableTransparency: checked,
-                          }
-                        : current,
-                    );
-                  }}
-                />
-                <span>Turn off transparency in picker</span>
-              </label>
-              <p className="setting-help">
-                Stored now for future picker styling. When picker is built, this
-                will force a solid background.
-              </p>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft?.useDefaultsWhenNotRunning ?? false}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      updateSettingsDraft((current) => ({
+                        ...current,
+                        useDefaultsWhenNotRunning: checked,
+                      }));
+                    }}
+                  />
+                  <span>Use defaults when browser is not already running</span>
+                </label>
+                <p className="setting-help">
+                  If disabled and a matched rule browser is closed, Hops goes to
+                  picker. If enabled, Hops falls back to your configured default
+                  browser.
+                </p>
 
-              <label>
-                Theme
-                <select
-                  value={settingsDraft?.themePreference ?? theme}
-                  onChange={(event) => {
-                    updateThemePreference(
-                      event.currentTarget.value as ThemePreference,
-                    );
-                  }}
-                >
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </label>
-              <p className="setting-help">
-                Theme changes are saved immediately.
-              </p>
+                <label>
+                  Default browser
+                  <select
+                    value={settingsDraft?.defaultBrowserId ?? ""}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      updateSettingsDraft((current) => ({
+                        ...current,
+                        defaultBrowserId: value,
+                      }));
+                    }}
+                  >
+                    <option value="">None</option>
+                    {visibleBrowsers.map((browser) => (
+                      <option key={browser.id} value={browser.id}>
+                        {browser.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </article>
 
-              <label>
-                Default browser
-                <select
-                  value={settingsDraft?.defaultBrowserId ?? ""}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            defaultBrowserId: value,
-                          }
-                        : current,
-                    );
-                  }}
-                >
-                  <option value="">None</option>
-                  {visibleBrowsers.map((browser) => (
-                    <option key={browser.id} value={browser.id}>
-                      {browser.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <article className="card">
+                <h3>Style</h3>
 
-              <div className="settings-actions">
-                <button
-                  type="button"
-                  onClick={() => void handleSaveSettings()}
-                  disabled={!hasUnsavedSettings || isSaving}
-                >
-                  {isSaving ? "Saving..." : "Save settings"}
-                </button>
-                {hasUnsavedSettings ? (
-                  <p className="setting-help">
-                    You have unsaved settings changes.
-                  </p>
-                ) : null}
-              </div>
+                <label>
+                  Theme
+                  <select
+                    value={settingsDraft?.themePreference ?? theme}
+                    onChange={(event) => {
+                      updateThemePreference(
+                        event.currentTarget.value as ThemePreference,
+                      );
+                    }}
+                  >
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </label>
+                <p className="setting-help">
+                  Theme changes are saved immediately.
+                </p>
+
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft?.disableTransparency ?? false}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      updateSettingsDraft((current) => ({
+                        ...current,
+                        disableTransparency: checked,
+                      }));
+                    }}
+                  />
+                  <span>Turn off transparency in picker</span>
+                </label>
+                <p className="setting-help">
+                  Stored now for future picker styling. When picker is built,
+                  this will force a solid background.
+                </p>
+              </article>
 
               <article className="card">
                 <h3>Configuration Recovery</h3>

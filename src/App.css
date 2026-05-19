@@ -332,13 +332,6 @@ input {
   color: var(--h-muted);
 }
 
-.settings-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .action-panel {
   display: grid;
   gap: 10px;
