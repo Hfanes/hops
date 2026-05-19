@@ -4,7 +4,6 @@ import {
   FiGlobe,
   FiMail,
   FiRefreshCw,
-  FiTwitter,
 } from "react-icons/fi";
 import { RiTwitterXFill } from "react-icons/ri";
 import type { AppAboutInfo, AppUpdateStatus } from "../../services/tauri";

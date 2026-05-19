@@ -3,6 +3,7 @@ name = "hops"
 version = "0.1.0"
 description = "Hops is a lightweight Windows tray app that routes external links to the right browser based on your rules. Hops is not a web browser."
 authors = ["hfa"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

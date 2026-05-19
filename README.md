@@ -98,3 +98,7 @@ On first launch, Hops opens an onboarding flow that guides:
 ## Documentation Policy
 
 Important runtime behavior changes (routing, registration, tray/background behavior, rollback path) should always be reflected in this README.
+
+## License
+
+Hops is licensed under the MIT License. See [LICENSE](LICENSE).
