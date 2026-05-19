@@ -4,7 +4,7 @@ import { FiLock } from "react-icons/fi";
 import { getPickerState, hidePickerWindow, openUrl } from "../../services/tauri";
 import type { PickerSession, ThemePreference } from "../../types";
 import { PickerBrowserList } from "./PickerBrowserList";
-import "../../styles/PickerWindow.css";
+import "./picker.css";
 
 const PICKER_SESSION_EVENT = "picker-session";
 

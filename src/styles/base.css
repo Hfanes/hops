@@ -1,0 +1,143 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--h-bg);
+}
+
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+h1,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+p {
+  color: var(--h-muted);
+}
+
+code {
+  font-family: "Courier New", monospace;
+  color: var(--h-text);
+}
+
+.section-label,
+label {
+  color: var(--h-text);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.section-label {
+  margin-bottom: 4px;
+  color: var(--h-accent);
+}
+
+button,
+input,
+select {
+  border: 1px solid var(--h-border);
+  border-radius: 0;
+  background: var(--h-card);
+  color: var(--h-text);
+  font: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 16px;
+  background: var(--h-accent);
+  border-color: var(--h-shadow);
+  color: #233038;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  box-shadow: 4px 4px 0 var(--h-shadow);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--h-shadow);
+}
+
+button:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 var(--h-shadow);
+}
+
+button:disabled {
+  opacity: 0.52;
+  cursor: default;
+  filter: grayscale(0.4);
+}
+
+button.secondary {
+  background: var(--h-secondary);
+  color: #233038;
+}
+
+button.danger {
+  background: var(--h-danger);
+  color: #ffffff;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+}
+
+.label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 20px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--h-accent);
+  outline-offset: 0;
+  border-color: var(--h-accent);
+}
+
+input {
+  font-family: "Courier New", monospace;
+}

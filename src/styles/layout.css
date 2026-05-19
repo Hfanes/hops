@@ -1,0 +1,85 @@
+.actions,
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.topbar > div:first-child {
+  min-width: 220px;
+  flex: 1 1 auto;
+}
+
+.topbar .actions {
+  margin-left: auto;
+  justify-content: flex-end;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.sidebar-toggle,
+.sidebar-nav-item {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 38px;
+  padding: 0 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #fdf6e3;
+  box-shadow: none;
+}
+
+.sidebar-toggle {
+  border: 1px solid #fdf6e3;
+  color: #fdf6e3;
+}
+
+.sidebar-toggle span,
+.sidebar-nav-item span {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.sidebar-toggle.icon-only,
+.sidebar-nav-item.icon-only {
+  justify-content: center;
+}
+
+.sidebar-toggle.icon-only span,
+.sidebar-nav-item.icon-only span {
+  flex: 0;
+}
+
+.sidebar-toggle:hover:not(:disabled),
+.sidebar-nav-item:hover:not(:disabled) {
+  background: var(--h-sidebar-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.sidebar-nav-item.active {
+  background: #0b6269;
+  border-left: 4px solid var(--h-accent);
+  border-top: 1px solid var(--h-border);
+  border-right: 1px solid var(--h-border);
+  border-bottom: 1px solid var(--h-border);
+}
+
+.floating-top-button {
+  position: fixed;
+  right: 32px;
+  bottom: 32px;
+  z-index: 20;
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+}
+
+
+.tab-body {
+  display: grid;
+  gap: 14px;
+}

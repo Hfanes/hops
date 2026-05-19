@@ -1,0 +1,120 @@
+.browser-list,
+.rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rules-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.rules-section + .rules-section {
+  border-top: 1px solid var(--h-border);
+  padding-top: 14px;
+}
+
+.pattern-type-picker {
+  position: relative;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pattern-type-picker legend {
+  margin-bottom: 6px;
+  color: var(--h-text);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pattern-type-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 8px;
+}
+
+.pattern-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--h-border);
+  background: var(--h-card);
+  cursor: pointer;
+}
+
+.pattern-type-option:has(input:checked) {
+  border-color: var(--h-shadow);
+  background: #f4d47c;
+  color: #233038;
+  box-shadow: 4px 4px 0 var(--h-shadow);
+}
+
+.pattern-type-option:has(input:checked) .pattern-info-icon {
+  color: #233038;
+}
+
+.pattern-type-option input[type="radio"] {
+  width: 14px;
+  min-height: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--h-accent);
+  cursor: pointer;
+}
+
+.pattern-type-option span:first-of-type {
+  min-width: 0;
+  flex: 1;
+}
+
+.pattern-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: var(--h-muted);
+  cursor: pointer;
+}
+
+.pattern-info-icon:hover,
+.pattern-info-icon:focus-visible {
+  color: var(--h-accent);
+  outline: none;
+}
+
+.pattern-type-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 15;
+  width: min(380px, calc(100vw - 44px));
+  max-width: calc(100vw - 44px);
+  display: grid;
+  gap: 6px;
+  background: var(--h-card);
+  border: 1px solid var(--h-shadow);
+  box-shadow: 4px 4px 0 var(--h-shadow);
+  padding: 10px;
+  overflow-wrap: anywhere;
+}
+
+.pattern-type-popover p {
+  color: var(--h-muted);
+}
+
+.pattern-example {
+  color: var(--h-text);
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}

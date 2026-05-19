@@ -1,0 +1,31 @@
+:root {
+  --h-bg: #fdf6e3;
+  --h-card: #ffffff;
+  --h-text: #233038;
+  --h-muted: #5c686e;
+  --h-border: #d3dbdd;
+  --h-accent: #ff5b04;
+  --h-secondary: #f4d47c;
+  --h-sidebar: #075056;
+  --h-sidebar-hover: #0b6269;
+  --h-danger: #b62235;
+  --h-shadow: #233038;
+
+  color: var(--h-text);
+  font-family: "Segoe UI", Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.35;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:root.dark {
+  --h-bg: #233038;
+  --h-card: #2a3840;
+  --h-text: #fdf6e3;
+  --h-muted: #d3dbdd;
+  --h-border: #d3dbdd;
+  --h-shadow: #10191d;
+}
