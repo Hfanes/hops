@@ -2013,6 +2013,7 @@ pub fn run() {
                 .app_name(HOPS_APP_NAME)
                 .build(),
         )
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(url) = extract_url_from_args(&args) {
                 let state = app.state::<PickerState>();
@@ -2024,6 +2025,10 @@ pub fn run() {
             }
         }))
         .setup(move |app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             if let Err(error) = setup_tray(&app.handle()) {
                 eprintln!("{error}");
             }

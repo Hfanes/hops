@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   disable as disableAutostart,
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import type {
   AppConfig,
   BrowserRegistrationStatus,
@@ -11,6 +14,22 @@ import type {
   PickerSession,
   RouteDecision,
 } from "./types";
+
+export interface AppAboutInfo {
+  version: string;
+  releaseDate: string;
+}
+
+export interface AppUpdateStatus {
+  currentVersion: string;
+  available: boolean;
+  version: string | null;
+  date: string | null;
+  body: string | null;
+}
+
+const RELEASE_DATE =
+  import.meta.env.VITE_HOPS_RELEASE_DATE?.trim() || "Development build";
 
 export function loadConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("load_config");
@@ -109,4 +128,35 @@ export async function setStartWithWindowsEnabled(
   }
 
   return isAutostartEnabled();
+}
+
+export async function getAppAboutInfo(): Promise<AppAboutInfo> {
+  return {
+    version: await getVersion(),
+    releaseDate: RELEASE_DATE,
+  };
+}
+
+export async function checkForAppUpdate(): Promise<AppUpdateStatus> {
+  const [currentVersion, update] = await Promise.all([getVersion(), check()]);
+
+  return {
+    currentVersion,
+    available: Boolean(update),
+    version: update?.version ?? null,
+    date: update?.date ?? null,
+    body: update?.body ?? null,
+  };
+}
+
+export async function installAvailableUpdate(): Promise<boolean> {
+  const update = await check();
+
+  if (!update) {
+    return false;
+  }
+
+  await update.downloadAndInstall();
+  await relaunch();
+  return true;
 }

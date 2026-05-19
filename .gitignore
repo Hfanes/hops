@@ -50,6 +50,10 @@ pids
 *.seed
 *.pid.lock
 
+# Tauri updater signing keys
+.tauri/*.key
+.tauri/*.key.pub
+
 # miscellaneous
 /.vs
 .DS_Store

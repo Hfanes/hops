@@ -25,6 +25,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -32,5 +38,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3M0JCOERGMkFDNzZDOUMKUldTY2JNY3EzN2c3TjRPVy83aHRsOWVMNVRBcGRLQWR5OGNmVzdhT2trVG8zZWZNejdoekFmZUEK",
+      "endpoints": [
+        "https://github.com/Hfanes/hops/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
