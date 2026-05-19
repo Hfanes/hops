@@ -4,14 +4,13 @@
 
 body {
   margin: 0;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-y: auto;
   background: var(--h-bg);
 }
 
 #root {
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
 }
 
 h1,

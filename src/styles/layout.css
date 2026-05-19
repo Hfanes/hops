@@ -69,8 +69,8 @@
 
 .floating-top-button {
   position: fixed;
-  right: 32px;
-  bottom: 32px;
+  right: 20px;
+  bottom: 14px;
   z-index: 20;
   min-width: 38px;
   width: 38px;

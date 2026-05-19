@@ -1117,17 +1117,17 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
   }
 
-  const shellClassName = "h-screen overflow-hidden bg-[var(--h-bg)] p-0 md:p-3.5";
-  const panelClassName = `grid h-screen overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)] ${
+  const shellClassName = "min-h-screen bg-[var(--h-bg)] p-0";
+  const panelClassName = `grid min-h-screen bg-[var(--h-bg)] ${
     isSidebarCollapsed
       ? "grid-cols-[54px_minmax(0,1fr)]"
       : "grid-cols-[168px_minmax(0,1fr)]"
   }`;
   const onboardingPanelClassName =
-    "grid h-screen grid-cols-1 overflow-hidden border border-[var(--h-border)] bg-[var(--h-bg)] shadow-none md:h-[calc(100vh-28px)] md:shadow-[4px_4px_0_var(--h-shadow)]";
+    "grid min-h-screen grid-cols-1 bg-[var(--h-bg)]";
   const sidebarClassName =
-    "flex h-full min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
-  const contentClassName = "h-full min-h-0 min-w-0 overflow-auto p-3.5 md:p-[18px]";
+    "sticky top-0 flex h-screen min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
+  const contentClassName = "content-area min-h-screen min-w-0 p-4 md:p-6";
   const topbarClassName =
     "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
 
