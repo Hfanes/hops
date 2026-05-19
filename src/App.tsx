@@ -4,19 +4,24 @@ import {
   FiArrowUp,
   FiChevronLeft,
   FiChevronRight,
+  FiDownload,
   FiGlobe,
   FiInfo,
   FiList,
   FiMoon,
   FiNavigation,
   FiPlus,
+  FiRefreshCw,
   FiSettings,
   FiSun,
   FiX,
 } from "react-icons/fi";
 import {
+  checkForAppUpdate,
   getBrowserRegistrationStatus,
+  getAppAboutInfo,
   getStartWithWindowsEnabled,
+  installAvailableUpdate,
   listRunningBrowserIds,
   loadConfig,
   openWindowsDefaultApps,
@@ -30,6 +35,7 @@ import {
   showPickerForUrl,
   unregisterHopsAsBrowser,
 } from "./api";
+import type { AppAboutInfo, AppUpdateStatus } from "./api";
 import type {
   AppConfig,
   BrowserConfig,
@@ -41,7 +47,7 @@ import type {
 } from "./types";
 import "./App.css";
 
-type TabId = "settings" | "browsers" | "rules" | "router";
+type TabId = "settings" | "browsers" | "rules" | "router" | "about";
 
 interface RuleDraft {
   pattern: string;
@@ -80,6 +86,7 @@ const NAV_ITEMS: Array<{ id: TabId; label: string; icon: IconType }> = [
   { id: "browsers", label: "Browsers", icon: FiGlobe },
   { id: "rules", label: "Rules", icon: FiList },
   { id: "router", label: "Route tester", icon: FiNavigation },
+  { id: "about", label: "About", icon: FiInfo },
 ];
 
 const TAB_TITLES: Record<TabId, { title: string; subtitle: string }> = {
@@ -98,6 +105,10 @@ const TAB_TITLES: Record<TabId, { title: string; subtitle: string }> = {
   router: {
     title: "Route Tester",
     subtitle: "Preview routing decisions before opening a URL.",
+  },
+  about: {
+    title: "About",
+    subtitle: "Version, release details, and app updates.",
   },
 };
 
@@ -354,6 +365,12 @@ function App() {
   >(null);
   const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
     useState(false);
+  const [aboutInfo, setAboutInfo] = useState<AppAboutInfo | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
+    null,
+  );
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
     useState(true);
@@ -506,6 +523,14 @@ function App() {
 
   useEffect(() => {
     setFormModal(null);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "about") {
+      return;
+    }
+
+    void refreshAbout(false);
   }, [activeTab]);
 
   function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
@@ -1330,6 +1355,55 @@ function App() {
       }
     } finally {
       setIsRouting(false);
+    }
+  }
+
+  async function refreshAbout(showResultStatus = true) {
+    setIsCheckingUpdate(true);
+    try {
+      const [nextAboutInfo, nextUpdateStatus] = await Promise.all([
+        getAppAboutInfo(),
+        checkForAppUpdate(),
+      ]);
+      setAboutInfo(nextAboutInfo);
+      setUpdateStatus(nextUpdateStatus);
+
+      if (showResultStatus) {
+        setStatus({
+          kind: nextUpdateStatus.available ? "warning" : "success",
+          text: nextUpdateStatus.available
+            ? `Hops ${nextUpdateStatus.version} is available.`
+            : "Hops is up to date.",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({
+        kind: "error",
+        text: `Could not check for updates: ${message}`,
+      });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }
+
+  async function updateApp() {
+    setIsInstallingUpdate(true);
+    try {
+      const installed = await installAvailableUpdate();
+
+      if (!installed) {
+        setStatus({ kind: "success", text: "Hops is already up to date." });
+        await refreshAbout(false);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({
+        kind: "error",
+        text: `Could not install update: ${message}`,
+      });
+    } finally {
+      setIsInstallingUpdate(false);
     }
   }
 
@@ -2618,6 +2692,98 @@ function App() {
                   </p>
                 </article>
               ) : null}
+            </section>
+          ) : null}
+
+          {activeTab === "about" ? (
+            <section className="tab-body">
+              <article className="card">
+                <div className="card-title">
+                  <h3>Hops</h3>
+                  <div className="badges">
+                    <span
+                      className={`badge ${
+                        updateStatus?.available ? "warning" : "running"
+                      }`}
+                    >
+                      {isCheckingUpdate
+                        ? "checking"
+                        : updateStatus?.available
+                          ? "update available"
+                          : updateStatus
+                            ? "up to date"
+                            : "not checked"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="about-grid">
+                  <div className="about-row">
+                    <span>Current version</span>
+                    <strong>
+                      {aboutInfo?.version ??
+                        updateStatus?.currentVersion ??
+                        "Loading..."}
+                    </strong>
+                  </div>
+                  <div className="about-row">
+                    <span>Release date</span>
+                    <strong>{aboutInfo?.releaseDate ?? "Loading..."}</strong>
+                  </div>
+                  <div className="about-row">
+                    <span>Update status</span>
+                    <strong>
+                      {isCheckingUpdate
+                        ? "Checking..."
+                        : updateStatus?.available
+                          ? `Hops ${updateStatus.version} is available`
+                          : updateStatus
+                            ? "You are on the latest version"
+                            : "Not checked yet"}
+                    </strong>
+                  </div>
+                  {updateStatus?.available && updateStatus.date ? (
+                    <div className="about-row">
+                      <span>Available release date</span>
+                      <strong>{updateStatus.date}</strong>
+                    </div>
+                  ) : null}
+                </div>
+
+                {updateStatus?.available && updateStatus.body ? (
+                  <div className="action-panel">
+                    <p className="setting-help">{updateStatus.body}</p>
+                  </div>
+                ) : null}
+
+                <div className="inline-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void refreshAbout()}
+                    disabled={isCheckingUpdate || isInstallingUpdate}
+                  >
+                    <FiRefreshCw aria-hidden="true" />
+                    {isCheckingUpdate ? "Checking..." : "Check for updates"}
+                  </button>
+                  {updateStatus?.available ? (
+                    <button
+                      type="button"
+                      onClick={() => void updateApp()}
+                      disabled={isCheckingUpdate || isInstallingUpdate}
+                    >
+                      <FiDownload aria-hidden="true" />
+                      {isInstallingUpdate ? "Installing..." : "Update now"}
+                    </button>
+                  ) : null}
+                </div>
+
+                <p className="setting-help">
+                  Updates are checked against the latest GitHub Release. Hops
+                  downloads signed update artifacts and restarts after a
+                  successful install.
+                </p>
+              </article>
             </section>
           ) : null}
           {topButton}
