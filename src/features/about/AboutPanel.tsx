@@ -1,5 +1,36 @@
-import { FiDownload, FiRefreshCw } from "react-icons/fi";
+import {
+  FiDownload,
+  FiGithub,
+  FiGlobe,
+  FiMail,
+  FiRefreshCw,
+  FiTwitter,
+} from "react-icons/fi";
+import { RiTwitterXFill } from "react-icons/ri";
 import type { AppAboutInfo, AppUpdateStatus } from "../../services/tauri";
+
+const creatorLinks = [
+  {
+    label: "GitHub",
+    href: "https://github.com/Hfanes",
+    icon: FiGithub,
+  },
+  {
+    label: "Twitter",
+    href: "https://x.com/hfa_dev",
+    icon: RiTwitterXFill,
+  },
+  {
+    label: "Website",
+    href: "https://www.hfanes.com/",
+    icon: FiGlobe,
+  },
+  {
+    label: "Mail",
+    href: "mailto:anesfh@gmail.com",
+    icon: FiMail,
+  },
+];
 
 export function AboutPanel({
   aboutInfo,
@@ -40,7 +71,9 @@ export function AboutPanel({
           <div className="about-row">
             <span>Current version</span>
             <strong>
-              {aboutInfo?.version ?? updateStatus?.currentVersion ?? "Loading..."}
+              {aboutInfo?.version ??
+                updateStatus?.currentVersion ??
+                "Loading..."}
             </strong>
           </div>
           <div className="about-row">
@@ -99,6 +132,27 @@ export function AboutPanel({
           Updates are checked against the latest GitHub Release. Hops downloads
           signed update artifacts and restarts after a successful install.
         </p>
+      </article>
+
+      <article className="card">
+        <div className="card-title">
+          <h3>By @hfa</h3>
+        </div>
+
+        <div className="about-links">
+          {creatorLinks.map(({ label, href, icon: Icon }) => (
+            <a
+              key={label}
+              className="about-link"
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Icon aria-hidden="true" />
+              <span>{label}</span>
+            </a>
+          ))}
+        </div>
       </article>
     </section>
   );

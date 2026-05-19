@@ -25,3 +25,29 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.about-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.about-link {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--h-border);
+  background: color-mix(in srgb, var(--h-card) 88%, var(--h-secondary));
+  color: var(--h-text);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.about-link:hover {
+  border-color: var(--h-shadow);
+  background: var(--h-secondary);
+}
