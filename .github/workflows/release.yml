@@ -54,6 +54,7 @@ jobs:
           releaseBody: "Download the Windows installer from the assets below."
           releaseDraft: true
           prerelease: false
+          releaseAssetNamePattern: "hops[ext]"
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
