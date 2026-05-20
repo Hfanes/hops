@@ -1,5 +1,7 @@
 use crate::browsers::{
     detect_browsers, hydrate_detected_browser_defaults, merge_detected_browsers,
+    normalize_manual_browser_entries,
+    validate_browser_for_launch,
 };
 use crate::models::{AppConfig, BrowserConfig, RulePatternType, ThemePreference};
 use crate::CONFIG_FILENAME;
@@ -99,6 +101,7 @@ pub(crate) fn normalize_config(config: &mut AppConfig) {
     }
 
     hydrate_detected_browser_defaults(config);
+    normalize_manual_browser_entries(config);
 
     let browser_ids: HashSet<String> = config
         .browsers
@@ -123,6 +126,10 @@ pub(crate) fn validate_config(config: &AppConfig) -> Result<(), String> {
         .iter()
         .map(|browser| browser.id.clone())
         .collect();
+
+    for browser in &config.browsers {
+        validate_browser_for_launch(browser)?;
+    }
 
     if let Some(default_browser_id) = config.default_browser_id.as_deref() {
         if !browser_ids.contains(default_browser_id) {

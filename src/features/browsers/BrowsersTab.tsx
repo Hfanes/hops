@@ -19,6 +19,22 @@ export function BrowsersTab({
   onFlushBrowserSave: (browserId: string) => void;
   onToggleBrowserHidden: (browserId: string, isHidden: boolean) => void;
 }) {
+  function saveStateText(browser: BrowserConfig) {
+    if (savingBrowserIds.has(browser.id)) {
+      return "Saving browser...";
+    }
+    if (pendingBrowserIds.has(browser.id)) {
+      return "Unsaved browser changes...";
+    }
+    if (failedBrowserIds.has(browser.id)) {
+      return "Browser save failed. Keep editing to retry.";
+    }
+    if (browser.source === "manual" && !browser.manualTrust) {
+      return "Path changes require validation before Hops will trust this browser.";
+    }
+    return "Browser changes save automatically.";
+  }
+
   return (
     <section className="tab-body">
       <div className="browser-list">
@@ -31,6 +47,13 @@ export function BrowsersTab({
               <strong>{browser.name}</strong>
               <div className="badges">
                 <span className="badge">{browser.source}</span>
+                {browser.source === "manual" && browser.manualTrust ? (
+                  <span className="badge">
+                    {browser.manualTrust === "verified"
+                      ? "verified"
+                      : "user confirmed"}
+                  </span>
+                ) : null}
                 {runningBrowserIds.has(browser.id) ? (
                   <span className="badge running">running</span>
                 ) : null}
@@ -41,13 +64,7 @@ export function BrowsersTab({
             </div>
 
             <p className="setting-help inline-save-state">
-              {savingBrowserIds.has(browser.id)
-                ? "Saving browser..."
-                : pendingBrowserIds.has(browser.id)
-                  ? "Unsaved browser changes..."
-                  : failedBrowserIds.has(browser.id)
-                    ? "Browser save failed. Keep editing to retry."
-                    : "Browser changes save automatically."}
+              {saveStateText(browser)}
             </p>
 
             <label>

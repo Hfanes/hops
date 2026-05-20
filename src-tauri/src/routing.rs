@@ -1,4 +1,4 @@
-use crate::browsers::{is_browser_running, running_processes};
+use crate::browsers::{is_browser_running, running_processes, validate_browser_for_launch};
 use crate::models::{
     AppConfig, BrowserConfig, RouteAction, RouteDecision, RuleConfig, RulePatternType,
 };
@@ -8,7 +8,6 @@ use globset::GlobBuilder;
 use regex::Regex;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use url::Url;
 
@@ -212,15 +211,9 @@ pub(crate) fn open_url_with_browser(
         .iter()
         .find(|browser| browser.id == browser_id && !browser.is_hidden)
         .ok_or_else(|| format!("Browser '{browser_id}' was not found in config."))?;
+    let validated = validate_browser_for_launch(browser)?;
 
-    if !Path::new(&browser.path).exists() {
-        return Err(format!(
-            "Browser executable does not exist: {}",
-            browser.path
-        ));
-    }
-
-    let mut command = Command::new(&browser.path);
+    let mut command = Command::new(&validated.executable_path);
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     command
@@ -229,8 +222,8 @@ pub(crate) fn open_url_with_browser(
         .stderr(Stdio::null());
 
     if private_mode {
-        if let Some(flag) = browser.private_flag.as_deref() {
-            if !flag.trim().is_empty() {
+        if let Some(flag) = validated.private_flag.as_deref() {
+            if !flag.is_empty() {
                 command.arg(flag);
             }
         }
@@ -279,6 +272,7 @@ mod tests {
             name: name.to_string(),
             path: format!("C:\\Tools\\{name}\\browser.exe"),
             private_flag: Some("--incognito".to_string()),
+            manual_trust: None,
             source: BrowserSource::Manual,
             is_hidden: false,
         }
