@@ -9,6 +9,7 @@ export function BrowsersTab({
   onUpdateBrowser,
   onFlushBrowserSave,
   onToggleBrowserHidden,
+  onDeleteManualBrowser,
 }: {
   browsers: BrowserConfig[];
   runningBrowserIds: Set<string>;
@@ -18,6 +19,7 @@ export function BrowsersTab({
   onUpdateBrowser: (browserId: string, patch: Partial<BrowserConfig>) => void;
   onFlushBrowserSave: (browserId: string) => void;
   onToggleBrowserHidden: (browserId: string, isHidden: boolean) => void;
+  onDeleteManualBrowser: (browserId: string) => void;
 }) {
   function saveStateText(browser: BrowserConfig) {
     if (savingBrowserIds.has(browser.id)) {
@@ -108,6 +110,15 @@ export function BrowsersTab({
             </label>
 
             <div className="inline-actions">
+              {browser.source === "manual" ? (
+                <button
+                  type="button"
+                  className="secondary danger"
+                  onClick={() => onDeleteManualBrowser(browser.id)}
+                >
+                  Delete
+                </button>
+              ) : null}
               {browser.isHidden ? (
                 <button
                   type="button"
