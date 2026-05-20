@@ -18,6 +18,7 @@ import {
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showPickerForUrl,
   unregisterHopsAsBrowser,
+  validateManualBrowser,
 } from "./services/tauri";
 import type { AppAboutInfo, AppUpdateStatus } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
@@ -50,6 +51,7 @@ import type {
   AppConfig,
   BrowserDraft,
   BrowserConfig,
+  ManualBrowserValidationResult,
   BrowserRegistrationStatus,
   FormModal,
   RouteDecision,
@@ -120,6 +122,20 @@ function App() {
     path: "",
     privateFlag: "",
   });
+  const [manualBrowserConfirmation, setManualBrowserConfirmation] = useState<{
+    mode: "add" | "edit";
+    browserId: string | null;
+    browser: BrowserConfig;
+    validation: ManualBrowserValidationResult;
+  } | null>(null);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    title: string;
+    message: string;
+    kind: "error" | "warning";
+    confirmLabel?: string;
+  } | null>(null);
+  const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
+    useState(false);
 
   const [ruleDraft, setRuleDraft] = useState<RuleDraft>({
     pattern: "",
@@ -137,6 +153,7 @@ function App() {
   const [isRouting, setIsRouting] = useState(false);
   const isSaving = saveActivityCount > 0;
   const configRef = useRef<AppConfig | null>(null);
+  const persistedConfigRef = useRef<AppConfig | null>(null);
   const settingsDraftRef = useRef<SettingsDraft | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const browserSaveTimersRef = useRef<Record<string, number>>({});
@@ -258,10 +275,174 @@ function App() {
     const nextSettingsDraft = settingsDraftFromConfig(nextConfig);
 
     configRef.current = nextConfig;
+    persistedConfigRef.current = nextConfig;
     settingsDraftRef.current = nextSettingsDraft;
     setConfig(nextConfig);
     setTheme(nextConfig.themePreference);
     setSettingsDraft(nextSettingsDraft);
+  }
+
+  function normalizeBrowserPath(path: string) {
+    return path.trim().replace(/\//g, "\\").toLowerCase();
+  }
+
+  function findBrowserPathConflict(browser: BrowserConfig) {
+    const currentConfig = configRef.current;
+    if (!currentConfig) {
+      return null;
+    }
+
+    const normalizedPath = normalizeBrowserPath(browser.path);
+    if (!normalizedPath) {
+      return null;
+    }
+
+    return (
+      currentConfig.browsers.find(
+        (candidate) =>
+          candidate.id !== browser.id &&
+          normalizeBrowserPath(candidate.path) === normalizedPath,
+      ) ?? null
+    );
+  }
+
+  function showFeedbackModal(options: {
+    title: string;
+    message: string;
+    kind: "error" | "warning";
+    confirmLabel?: string;
+  }) {
+    setFeedbackModal(options);
+  }
+
+  function showBrowserValidationAlert(message: string) {
+    setStatus({
+      kind: "error",
+      text: message,
+    });
+    showFeedbackModal({
+      title: "Invalid browser configuration",
+      message,
+      kind: "error",
+    });
+  }
+
+  function revertBrowserToPersisted(browserId: string) {
+    const persistedConfig = persistedConfigRef.current;
+    const currentConfig = configRef.current;
+    if (!persistedConfig || !currentConfig) {
+      return;
+    }
+
+    const persistedBrowser = persistedConfig.browsers.find(
+      (browser) => browser.id === browserId,
+    );
+    if (!persistedBrowser) {
+      return;
+    }
+
+    const nextConfig: AppConfig = {
+      ...currentConfig,
+      browsers: currentConfig.browsers.map((browser) =>
+        browser.id === browserId ? persistedBrowser : browser,
+      ),
+    };
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+  }
+
+  function applyManualBrowserValidation(
+    browser: BrowserConfig,
+    validation: ManualBrowserValidationResult,
+  ): BrowserConfig {
+    return {
+      ...browser,
+      name: browser.name.trim() || validation.browserName,
+      privateFlag: validation.privateFlag,
+      manualTrust: validation.manualTrust,
+    };
+  }
+
+  async function validateManualBrowserConfig(
+    browser: BrowserConfig,
+    allowUserConfirmed = false,
+    options?: {
+      showAlert?: boolean;
+      revertBrowserId?: string;
+      allowConfirmationFlow?: boolean;
+    },
+  ): Promise<{
+    browser: BrowserConfig;
+    validation: ManualBrowserValidationResult;
+  } | null> {
+    const conflict = findBrowserPathConflict(browser);
+    if (conflict) {
+      const message = `A browser with this executable path already exists: "${conflict.name}".`;
+      if (options?.revertBrowserId) {
+        revertBrowserToPersisted(options.revertBrowserId);
+      }
+      if (options?.showAlert) {
+        showBrowserValidationAlert(message);
+      } else {
+        setStatus({
+          kind: "error",
+          text: message,
+        });
+      }
+      return null;
+    }
+
+    let validation: ManualBrowserValidationResult;
+    try {
+      validation = await validateManualBrowser({
+        name: browser.name,
+        path: browser.path,
+        privateFlag: browser.privateFlag,
+        allowUserConfirmed,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (options?.revertBrowserId) {
+        revertBrowserToPersisted(options.revertBrowserId);
+      }
+      if (options?.showAlert) {
+        showBrowserValidationAlert(message);
+      } else {
+        setStatus({
+          kind: "error",
+          text: message,
+        });
+      }
+      return null;
+    }
+
+    if (validation.requiresConfirmation) {
+      if (!options?.allowConfirmationFlow) {
+        const message = validation.message;
+        if (options?.revertBrowserId) {
+          revertBrowserToPersisted(options.revertBrowserId);
+        }
+        if (options?.showAlert) {
+          showBrowserValidationAlert(message);
+        } else {
+          setStatus({
+            kind: "error",
+            text: message,
+          });
+        }
+        return null;
+      }
+
+      return {
+        browser,
+        validation,
+      };
+    }
+
+    return {
+      browser: applyManualBrowserValidation(browser, validation),
+      validation,
+    };
   }
 
   function updateThemePreference(nextTheme: ThemePreference) {
@@ -404,36 +585,85 @@ function App() {
         return next;
       });
 
-      void persistConfig(nextConfig, {
-        errorPrefix: "Could not save browser changes",
-        onSuccess: () => {
-          setSavingBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
-          setFailedBrowserIds((current) => {
-            if (!current.has(browserId)) {
-              return current;
+      void (async () => {
+        try {
+          let configToSave = nextConfig;
+          const browser = configToSave.browsers.find((item) => item.id === browserId);
+          if (browser) {
+            const prepared = await validateManualBrowserConfig(browser, false, {
+              showAlert: true,
+              revertBrowserId: browserId,
+              allowConfirmationFlow: browser.source === "manual",
+            });
+            if (!prepared) {
+              return;
             }
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
+
+            if (
+              browser.source === "manual" &&
+              prepared.validation.requiresConfirmation
+            ) {
+              setManualBrowserConfirmation({
+                mode: "edit",
+                browserId,
+                browser,
+                validation: prepared.validation,
+              });
+              setStatus({
+                kind: "warning",
+                text: prepared.validation.message,
+              });
+              return;
+            }
+
+            configToSave = {
+              ...configToSave,
+              browsers: configToSave.browsers.map((item) =>
+                item.id === browserId ? prepared.browser : item,
+              ),
+            };
+            configRef.current = configToSave;
+            setConfig(configToSave);
+          }
+
+          await persistConfig(configToSave, {
+            errorPrefix: "Could not save browser changes",
+            onSuccess: () => {
+              setSavingBrowserIds((current) => {
+                const next = cloneSet(current);
+                next.delete(browserId);
+                return next;
+              });
+              setFailedBrowserIds((current) => {
+                if (!current.has(browserId)) {
+                  return current;
+                }
+                const next = cloneSet(current);
+                next.delete(browserId);
+                return next;
+              });
+            },
+            onError: () => {
+              setSavingBrowserIds((current) => {
+                const next = cloneSet(current);
+                next.delete(browserId);
+                return next;
+              });
+              setFailedBrowserIds((current) => {
+                const next = cloneSet(current);
+                next.add(browserId);
+                return next;
+              });
+            },
           });
-        },
-        onError: () => {
+        } finally {
           setSavingBrowserIds((current) => {
             const next = cloneSet(current);
             next.delete(browserId);
             return next;
           });
-          setFailedBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.add(browserId);
-            return next;
-          });
-        },
-      });
+        }
+      })();
     }, 500);
   }
 
@@ -457,36 +687,75 @@ function App() {
       return next;
     });
 
-    void persistConfig(latestConfig, {
-      errorPrefix: "Could not save browser changes",
-      onSuccess: () => {
-        setSavingBrowserIds((current) => {
-          const next = cloneSet(current);
-          next.delete(browserId);
-          return next;
-        });
-        setFailedBrowserIds((current) => {
-          if (!current.has(browserId)) {
-            return current;
+    void (async () => {
+      try {
+        let configToSave = latestConfig;
+        const browser = configToSave.browsers.find((item) => item.id === browserId);
+        if (browser) {
+          const prepared = await validateManualBrowserConfig(browser, false, {
+            showAlert: true,
+            revertBrowserId: browserId,
+            allowConfirmationFlow: browser.source === "manual",
+          });
+          if (!prepared) {
+            return;
           }
-          const next = cloneSet(current);
-          next.delete(browserId);
-          return next;
+
+          if (
+            browser.source === "manual" &&
+            prepared.validation.requiresConfirmation
+          ) {
+            setManualBrowserConfirmation({
+              mode: "edit",
+              browserId,
+              browser,
+              validation: prepared.validation,
+            });
+            setStatus({
+              kind: "warning",
+              text: prepared.validation.message,
+            });
+            return;
+          }
+
+          configToSave = {
+            ...configToSave,
+            browsers: configToSave.browsers.map((item) =>
+              item.id === browserId ? prepared.browser : item,
+            ),
+          };
+          configRef.current = configToSave;
+          setConfig(configToSave);
+        }
+
+        await persistConfig(configToSave, {
+          errorPrefix: "Could not save browser changes",
+          onSuccess: () => {
+            setFailedBrowserIds((current) => {
+              if (!current.has(browserId)) {
+                return current;
+              }
+              const next = cloneSet(current);
+              next.delete(browserId);
+              return next;
+            });
+          },
+          onError: () => {
+            setFailedBrowserIds((current) => {
+              const next = cloneSet(current);
+              next.add(browserId);
+              return next;
+            });
+          },
         });
-      },
-      onError: () => {
+      } finally {
         setSavingBrowserIds((current) => {
           const next = cloneSet(current);
           next.delete(browserId);
           return next;
         });
-        setFailedBrowserIds((current) => {
-          const next = cloneSet(current);
-          next.add(browserId);
-          return next;
-        });
-      },
-    });
+      }
+    })();
   }
 
   async function refreshRegistrationStatus() {
@@ -567,9 +836,17 @@ function App() {
   function updateBrowser(browserId: string, patch: Partial<BrowserConfig>) {
     const nextConfig = applyConfigChange((current) => ({
       ...current,
-      browsers: current.browsers.map((browser) =>
-        browser.id === browserId ? { ...browser, ...patch } : browser,
-      ),
+      browsers: current.browsers.map((browser) => {
+        if (browser.id !== browserId) {
+          return browser;
+        }
+
+        const nextBrowser = { ...browser, ...patch };
+        if (browser.source === "manual" && patch.path !== undefined) {
+          nextBrowser.manualTrust = null;
+        }
+        return nextBrowser;
+      }),
     }));
 
     if (!nextConfig) {
@@ -603,11 +880,68 @@ function App() {
     });
   }
 
+  function deleteManualBrowser(browserId: string) {
+    const currentConfig = configRef.current;
+    const browser = currentConfig?.browsers.find((item) => item.id === browserId);
+    if (!currentConfig || !browser || browser.source !== "manual") {
+      return;
+    }
+
+    const existingTimer = browserSaveTimersRef.current[browserId];
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      delete browserSaveTimersRef.current[browserId];
+    }
+
+    const nextConfig = applyConfigChange((current) => ({
+      ...current,
+      defaultBrowserId:
+        current.defaultBrowserId === browserId ? null : current.defaultBrowserId,
+      browsers: current.browsers.filter((item) => item.id !== browserId),
+      rules: current.rules.filter((rule) => rule.browserId !== browserId),
+    }));
+
+    if (!nextConfig) {
+      return;
+    }
+
+    setPendingBrowserIds((current) => {
+      if (!current.has(browserId)) {
+        return current;
+      }
+      const next = cloneSet(current);
+      next.delete(browserId);
+      return next;
+    });
+    setSavingBrowserIds((current) => {
+      if (!current.has(browserId)) {
+        return current;
+      }
+      const next = cloneSet(current);
+      next.delete(browserId);
+      return next;
+    });
+    setFailedBrowserIds((current) => {
+      if (!current.has(browserId)) {
+        return current;
+      }
+      const next = cloneSet(current);
+      next.delete(browserId);
+      return next;
+    });
+
+    void persistConfig(nextConfig, {
+      successText: `Deleted manual browser "${browser.name}".`,
+      errorPrefix: "Could not delete manual browser",
+    });
+  }
+
   async function addManualBrowser() {
+    const currentConfig = configRef.current;
     const name = browserDraft.name.trim();
     const path = browserDraft.path.trim();
 
-    if (!name || !path) {
+    if (!currentConfig || !name || !path) {
       setStatus({
         kind: "error",
         text: "Manual browser needs both a name and an executable path.",
@@ -620,24 +954,121 @@ function App() {
       name,
       path,
       privateFlag: browserDraft.privateFlag.trim() || null,
+      manualTrust: null,
       source: "manual",
       isHidden: false,
     };
+    const prepared = await validateManualBrowserConfig(browser, false, {
+      showAlert: true,
+    });
+    if (!prepared) {
+      return;
+    }
 
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      browsers: [...current.browsers, browser],
-    }));
-    if (!nextConfig) {
+    if (prepared.validation.requiresConfirmation) {
+      setManualBrowserConfirmation({
+        mode: "add",
+        browserId: null,
+        browser,
+        validation: prepared.validation,
+      });
+      setStatus({
+        kind: "warning",
+        text: prepared.validation.message,
+      });
       return;
     }
 
     setBrowserDraft({ name: "", path: "", privateFlag: "" });
+    setFormModal(null);
+    const nextConfig: AppConfig = {
+      ...currentConfig,
+      browsers: [...currentConfig.browsers, prepared.browser],
+    };
     await persistConfig(nextConfig, {
-      successText: `Added manual browser "${name}".`,
+      successText: `Added manual browser "${prepared.browser.name}".`,
       errorPrefix: "Could not add manual browser",
     });
-    setFormModal(null);
+  }
+
+  async function confirmManualBrowser() {
+    const confirmation = manualBrowserConfirmation;
+    const currentConfig = configRef.current;
+    if (!confirmation || !currentConfig || isConfirmingManualBrowser) {
+      return;
+    }
+
+    setIsConfirmingManualBrowser(true);
+    setManualBrowserConfirmation(null);
+    if (confirmation.mode === "add") {
+      setFormModal(null);
+      setBrowserDraft({ name: "", path: "", privateFlag: "" });
+    }
+
+    try {
+      if (confirmation.mode === "add") {
+        const prepared = await validateManualBrowserConfig(
+          confirmation.browser,
+          true,
+          {
+            showAlert: true,
+          },
+        );
+        if (!prepared) {
+          return;
+        }
+
+        const latestConfig = configRef.current;
+        if (!latestConfig) {
+          return;
+        }
+
+        const nextConfig: AppConfig = {
+          ...latestConfig,
+          browsers: [...latestConfig.browsers, prepared.browser],
+        };
+        await persistConfig(nextConfig, {
+          successText: `Added manual browser "${prepared.browser.name}".`,
+          errorPrefix: "Could not add manual browser",
+        });
+        return;
+      }
+
+      const browserId = confirmation.browserId;
+      if (!browserId) {
+        return;
+      }
+
+      const currentBrowser = currentConfig.browsers.find(
+        (browser) => browser.id === browserId,
+      );
+      if (!currentBrowser) {
+        return;
+      }
+
+      const prepared = await validateManualBrowserConfig(currentBrowser, true, {
+        showAlert: true,
+        revertBrowserId: browserId,
+      });
+      if (!prepared) {
+        return;
+      }
+
+      const nextConfig: AppConfig = {
+        ...currentConfig,
+        browsers: currentConfig.browsers.map((browser) =>
+          browser.id === browserId ? prepared.browser : browser,
+        ),
+      };
+      configRef.current = nextConfig;
+      setConfig(nextConfig);
+      await persistConfig(nextConfig, {
+        successText: `Updated manual browser "${prepared.browser.name}".`,
+        errorPrefix: "Could not save browser changes",
+      });
+    } finally {
+      setIsConfirmingManualBrowser(false);
+    }
   }
 
   function updateRule(ruleId: string, patch: Partial<RuleConfig>) {
@@ -1054,9 +1485,11 @@ function App() {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
       if (openImmediately && error instanceof Error && error.name === "TimeoutError") {
-        window.alert(
-          `Hops could not open the route within 10 seconds.\n\n${message}`,
-        );
+        showFeedbackModal({
+          title: "Route opening timed out",
+          message: `Hops could not open the route within 10 seconds.\n\n${message}`,
+          kind: "warning",
+        });
       }
     } finally {
       setIsRouting(false);
@@ -1310,6 +1743,56 @@ function App() {
       </ModalShell>
     ) : null;
 
+  const manualBrowserConfirmationModal = manualBrowserConfirmation ? (
+    <ModalShell
+      title={<h3 id="manual-browser-confirm-title">Confirm manual browser</h3>}
+      titleId="manual-browser-confirm-title"
+      onClose={() => setManualBrowserConfirmation(null)}
+    >
+      <p className="setting-help">{manualBrowserConfirmation.validation.message}</p>
+      <label>
+        Executable path
+        <input value={manualBrowserConfirmation.browser.path} readOnly />
+      </label>
+      <label>
+        Name
+        <input value={manualBrowserConfirmation.browser.name} readOnly />
+      </label>
+      <div className="inline-actions">
+        <button
+          type="button"
+          onClick={() => void confirmManualBrowser()}
+          disabled={isConfirmingManualBrowser}
+        >
+          {isConfirmingManualBrowser ? "Confirming..." : "Confirm and trust"}
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={isConfirmingManualBrowser}
+          onClick={() => setManualBrowserConfirmation(null)}
+        >
+          Cancel
+        </button>
+      </div>
+    </ModalShell>
+  ) : null;
+
+  const feedbackModalElement = feedbackModal ? (
+    <ModalShell
+      title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
+      titleId="feedback-modal-title"
+      onClose={() => setFeedbackModal(null)}
+    >
+      <p className={`status ${feedbackModal.kind}`}>{feedbackModal.message}</p>
+      <div className="inline-actions">
+        <button type="button" onClick={() => setFeedbackModal(null)}>
+          {feedbackModal.confirmLabel ?? "OK"}
+        </button>
+      </div>
+    </ModalShell>
+  ) : null;
+
   if (isLoading) {
     return (
       <LoadingState
@@ -1419,6 +1902,8 @@ function App() {
           />
 
           {activeFormModal}
+          {manualBrowserConfirmationModal}
+          {feedbackModalElement}
 
           {statusBanner}
 
@@ -1467,6 +1952,7 @@ function App() {
               onUpdateBrowser={updateBrowser}
               onFlushBrowserSave={flushBrowserSave}
               onToggleBrowserHidden={toggleBrowserHidden}
+              onDeleteManualBrowser={deleteManualBrowser}
             />
           ) : null}
 

@@ -1,5 +1,7 @@
 use crate::browsers::{
     detect_browsers, hydrate_detected_browser_defaults, merge_detected_browsers,
+    normalize_manual_browser_entries,
+    validate_browser_for_launch,
 };
 use crate::models::{AppConfig, BrowserConfig, RulePatternType, ThemePreference};
 use crate::CONFIG_FILENAME;
@@ -83,6 +85,10 @@ fn default_config() -> AppConfig {
     }
 }
 
+fn normalize_browser_path(path: &str) -> String {
+    path.trim().replace('/', "\\").to_lowercase()
+}
+
 pub(crate) fn reset_config_with_detected_browsers(
     detected_browsers: Vec<BrowserConfig>,
     onboarding_completed: bool,
@@ -99,6 +105,7 @@ pub(crate) fn normalize_config(config: &mut AppConfig) {
     }
 
     hydrate_detected_browser_defaults(config);
+    normalize_manual_browser_entries(config);
 
     let browser_ids: HashSet<String> = config
         .browsers
@@ -123,6 +130,19 @@ pub(crate) fn validate_config(config: &AppConfig) -> Result<(), String> {
         .iter()
         .map(|browser| browser.id.clone())
         .collect();
+    let mut browser_paths: HashSet<String> = HashSet::new();
+
+    for browser in &config.browsers {
+        validate_browser_for_launch(browser)?;
+
+        let normalized_path = normalize_browser_path(&browser.path);
+        if !browser_paths.insert(normalized_path) {
+            return Err(format!(
+                "Browser path '{}' is duplicated. Each browser entry must use a unique executable path.",
+                browser.path
+            ));
+        }
+    }
 
     if let Some(default_browser_id) = config.default_browser_id.as_deref() {
         if !browser_ids.contains(default_browser_id) {
@@ -177,8 +197,21 @@ pub(crate) fn write_config_file(path: &Path, config: &AppConfig) -> Result<(), S
 mod tests {
     use super::*;
     use crate::browsers::build_detected_browser;
-    use crate::models::{AppConfig, BrowserSource, ThemePreference};
+    use crate::models::{AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, ThemePreference};
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_executable_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("hops-config-test-{unique}"));
+        fs::create_dir_all(&dir).expect("temp config test dir should create");
+        let path = dir.join(name);
+        fs::write(&path, []).expect("temp executable placeholder should write");
+        path
+    }
 
     #[test]
     fn reset_config_restores_defaults_and_keeps_only_detected_browsers() {
@@ -239,5 +272,47 @@ mod tests {
         assert!(loaded.onboarding_completed);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn validate_config_rejects_duplicate_browser_paths() {
+        let path = temp_executable_path("custom-browser.exe");
+        let path_string = path.to_string_lossy().to_string();
+        let config = AppConfig {
+            version: 1,
+            always_show_picker: false,
+            use_defaults_when_not_running: false,
+            disable_transparency: false,
+            theme_preference: ThemePreference::Light,
+            onboarding_completed: true,
+            default_browser_id: None,
+            browsers: vec![
+                BrowserConfig {
+                    id: "manual-a".to_string(),
+                    name: "Custom A".to_string(),
+                    path: path_string.clone(),
+                    private_flag: None,
+                    manual_trust: Some(ManualBrowserTrust::UserConfirmed),
+                    source: BrowserSource::Manual,
+                    is_hidden: false,
+                },
+                BrowserConfig {
+                    id: "manual-b".to_string(),
+                    name: "Custom B".to_string(),
+                    path: path_string.clone(),
+                    private_flag: None,
+                    manual_trust: Some(ManualBrowserTrust::UserConfirmed),
+                    source: BrowserSource::Manual,
+                    is_hidden: false,
+                },
+            ],
+            rules: Vec::new(),
+        };
+
+        let error = validate_config(&config).expect_err("duplicate browser paths should reject");
+        assert!(error.contains("duplicated"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 }

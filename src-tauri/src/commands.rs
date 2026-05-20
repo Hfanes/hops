@@ -1,13 +1,15 @@
 use crate::browsers::{
     detect_browsers, is_browser_running, merge_detected_browsers, running_processes,
+    validate_manual_browser_request,
 };
 use crate::config::{
     load_or_init_config, normalize_config, reset_config_with_detected_browsers,
     save_config_internal, validate_config,
 };
 use crate::models::{
-    AppConfig, BrowserRegistrationStatus, OpenUrlRequest, PickerLaunchSource, PickerSession,
-    RouteAction, RouteDecision,
+    AppConfig, BrowserRegistrationStatus, ManualBrowserValidationRequest,
+    ManualBrowserValidationResult, OpenUrlRequest, PickerLaunchSource, PickerSession, RouteAction,
+    RouteDecision,
 };
 use crate::picker::{
     hide_picker_window_internal, show_picker_window, show_settings_window, PickerState,
@@ -28,6 +30,13 @@ pub(crate) fn load_config(app: AppHandle) -> Result<AppConfig, String> {
 #[tauri::command]
 pub(crate) fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
     save_config_internal(&app, config, true)
+}
+
+#[tauri::command]
+pub(crate) fn validate_manual_browser(
+    request: ManualBrowserValidationRequest,
+) -> Result<ManualBrowserValidationResult, String> {
+    validate_manual_browser_request(&request)
 }
 
 #[tauri::command(async)]
@@ -89,6 +98,7 @@ pub(crate) fn route_and_open(app: AppHandle, url: String) -> Result<RouteDecisio
 
 #[tauri::command(async)]
 pub(crate) fn route_and_open_with_config(
+    app: AppHandle,
     config: AppConfig,
     url: String,
 ) -> Result<RouteDecision, String> {
@@ -99,7 +109,8 @@ pub(crate) fn route_and_open_with_config(
 
     if decision.action == RouteAction::OpenBrowser {
         if let Some(browser_id) = decision.browser_id.as_deref() {
-            open_url_with_browser(&normalized, browser_id, &url, decision.private_mode)?;
+            let trusted_config = load_or_init_config(&app, false)?;
+            open_url_with_browser(&trusted_config, browser_id, &url, decision.private_mode)?;
         }
     }
 

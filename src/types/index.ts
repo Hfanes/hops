@@ -1,4 +1,9 @@
 export type BrowserSource = "detected" | "manual";
+export type ManualBrowserTrust = "verified" | "user_confirmed";
+export type BrowserRecognition =
+  | "known"
+  | "recognized_family"
+  | "unverified_manual";
 
 export type RulePatternType =
   | "hostname"
@@ -17,8 +22,26 @@ export interface BrowserConfig {
   name: string;
   path: string;
   privateFlag: string | null;
+  manualTrust: ManualBrowserTrust | null;
   source: BrowserSource;
   isHidden: boolean;
+}
+
+export interface ManualBrowserValidationRequest {
+  name: string;
+  path: string;
+  privateFlag: string | null;
+  allowUserConfirmed: boolean;
+}
+
+export interface ManualBrowserValidationResult {
+  recognition: BrowserRecognition;
+  manualTrust: ManualBrowserTrust | null;
+  browserName: string;
+  privateFlag: string | null;
+  family: string | null;
+  requiresConfirmation: boolean;
+  message: string;
 }
 
 export interface RuleConfig {

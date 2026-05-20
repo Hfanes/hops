@@ -33,8 +33,25 @@ pub(crate) struct BrowserConfig {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) private_flag: Option<String>,
+    #[serde(default)]
+    pub(crate) manual_trust: Option<ManualBrowserTrust>,
     pub(crate) source: BrowserSource,
     pub(crate) is_hidden: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ManualBrowserTrust {
+    Verified,
+    UserConfirmed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserRecognition {
+    Known,
+    RecognizedFamily,
+    UnverifiedManual,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +109,28 @@ pub(crate) struct OpenUrlRequest {
     pub(crate) browser_id: String,
     pub(crate) url: String,
     pub(crate) private_mode: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualBrowserValidationRequest {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) private_flag: Option<String>,
+    #[serde(default)]
+    pub(crate) allow_user_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualBrowserValidationResult {
+    pub(crate) recognition: BrowserRecognition,
+    pub(crate) manual_trust: Option<ManualBrowserTrust>,
+    pub(crate) browser_name: String,
+    pub(crate) private_flag: Option<String>,
+    pub(crate) family: Option<String>,
+    pub(crate) requires_confirmation: bool,
+    pub(crate) message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

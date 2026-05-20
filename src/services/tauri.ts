@@ -10,6 +10,8 @@ import { check } from "@tauri-apps/plugin-updater";
 import type {
   AppConfig,
   BrowserRegistrationStatus,
+  ManualBrowserValidationRequest,
+  ManualBrowserValidationResult,
   OpenUrlRequest,
   PickerSession,
   RouteDecision,
@@ -37,6 +39,14 @@ export function loadConfig(): Promise<AppConfig> {
 
 export function saveConfig(config: AppConfig): Promise<AppConfig> {
   return invoke<AppConfig>("save_config", { config });
+}
+
+export function validateManualBrowser(
+  request: ManualBrowserValidationRequest,
+): Promise<ManualBrowserValidationResult> {
+  return invoke<ManualBrowserValidationResult>("validate_manual_browser", {
+    request,
+  });
 }
 
 export function refreshBrowsers(): Promise<AppConfig> {

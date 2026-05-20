@@ -109,6 +109,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_config,
             commands::save_config,
+            commands::validate_manual_browser,
             commands::refresh_browsers,
             commands::list_running_browser_ids,
             commands::preview_route,
