@@ -128,6 +128,12 @@ function App() {
     browser: BrowserConfig;
     validation: ManualBrowserValidationResult;
   } | null>(null);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    title: string;
+    message: string;
+    kind: "error" | "warning";
+    confirmLabel?: string;
+  } | null>(null);
   const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
     useState(false);
 
@@ -300,12 +306,25 @@ function App() {
     );
   }
 
+  function showFeedbackModal(options: {
+    title: string;
+    message: string;
+    kind: "error" | "warning";
+    confirmLabel?: string;
+  }) {
+    setFeedbackModal(options);
+  }
+
   function showBrowserValidationAlert(message: string) {
     setStatus({
       kind: "error",
       text: message,
     });
-    window.alert(message);
+    showFeedbackModal({
+      title: "Invalid browser configuration",
+      message,
+      kind: "error",
+    });
   }
 
   function revertBrowserToPersisted(browserId: string) {
@@ -1466,9 +1485,11 @@ function App() {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
       if (openImmediately && error instanceof Error && error.name === "TimeoutError") {
-        window.alert(
-          `Hops could not open the route within 10 seconds.\n\n${message}`,
-        );
+        showFeedbackModal({
+          title: "Route opening timed out",
+          message: `Hops could not open the route within 10 seconds.\n\n${message}`,
+          kind: "warning",
+        });
       }
     } finally {
       setIsRouting(false);
@@ -1757,6 +1778,21 @@ function App() {
     </ModalShell>
   ) : null;
 
+  const feedbackModalElement = feedbackModal ? (
+    <ModalShell
+      title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
+      titleId="feedback-modal-title"
+      onClose={() => setFeedbackModal(null)}
+    >
+      <p className={`status ${feedbackModal.kind}`}>{feedbackModal.message}</p>
+      <div className="inline-actions">
+        <button type="button" onClick={() => setFeedbackModal(null)}>
+          {feedbackModal.confirmLabel ?? "OK"}
+        </button>
+      </div>
+    </ModalShell>
+  ) : null;
+
   if (isLoading) {
     return (
       <LoadingState
@@ -1867,6 +1903,7 @@ function App() {
 
           {activeFormModal}
           {manualBrowserConfirmationModal}
+          {feedbackModalElement}
 
           {statusBanner}
 
