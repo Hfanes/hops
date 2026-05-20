@@ -19,8 +19,11 @@ Hops writes registration under `HKCU` (current user) so:
 ## Current Features
 
 - Settings UI (React + TypeScript)
-- Browser detection from known paths + registry fallback
-- Manual browser entries
+- Automatic browser detection from Windows registry entries + known install paths
+- Manual browser support with validation and one-time trust confirmation for unknown executables
+- Duplicate executable-path protection for detected and manual browser entries
+- Safe private-mode flag handling for supported browsers
+- Per-browser `Hide from picker` support, plus delete for manual browser entries
 - Rule management
 - Rule ordering (first match wins)
 - Rule enable/disable toggle
@@ -47,6 +50,33 @@ Hops evaluates URLs in this order:
 4. Otherwise -> picker flow
 
 The picker opens a small window near the cursor when a route needs user input (CTRL + SHIFT + LEFT CLICK). Holding Alt opens supported browsers in private mode.
+
+## Browser Detection And Manual Browser Rules
+
+Hops detects many known browsers automatically from Windows registry entries and common install locations. That includes mainstream Chromium, Firefox, Edge, and Opera variants, plus supported forks such as Brave, Vivaldi, LibreWolf, Waterfox, Floorp, Zen, Arc, Helium, and Tor Browser.
+
+Detected browsers and manual browsers are merged into one list. If you add a manual browser that points to the same executable path as a detected browser, the manual entry wins and the detected duplicate is suppressed.
+
+When you add a manual browser, Hops validates the executable path and classifies it into one of these trust states:
+
+- `verified`: the executable is recognized as a known browser or a recognized browser family
+- `user confirmed`: the executable is not recognized as a supported browser, but you explicitly approved it once so Hops is allowed to launch it
+
+If a manual browser path changes later, Hops revalidates it. A browser that was previously trusted may need confirmation again if the new path is no longer recognized.
+
+Hops does not allow arbitrary private-mode flags for known or recognized browsers. Instead, it derives or constrains the safe flag by browser family:
+
+- Chromium-family browsers use `--incognito`
+- Firefox-family browsers use `--private-window`
+- Microsoft Edge uses `--inprivate`
+- Opera uses `--private`
+- Tor Browser does not get an extra private-mode flag injected
+
+Unsupported custom flags such as arbitrary profile or command-line options are rejected. Unknown executables can still be added manually, but they require an explicit confirmation first and do not accept custom private-mode flags.
+
+Hops also blocks duplicate executable paths. You cannot add the same path twice, whether it already exists as a detected browser or as another manual entry. This keeps one trusted browser record per executable and avoids duplicate picker entries.
+
+In the browser list, detected browsers can be hidden with `Hide from picker` without being removed. Manual browsers can also be hidden, and they can be deleted entirely if you no longer want Hops to keep them.
 
 ## Lightweight And Performance Choices
 
