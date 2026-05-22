@@ -10,6 +10,10 @@
   flex: 1 1 auto;
 }
 
+.content-area {
+  padding-bottom: 58px;
+}
+
 .topbar .actions {
   margin-left: auto;
   justify-content: flex-end;
@@ -70,7 +74,7 @@
 .floating-top-button {
   position: fixed;
   right: 20px;
-  bottom: 14px;
+  bottom: 46px;
   z-index: 20;
   min-width: 38px;
   width: 38px;
@@ -78,8 +82,79 @@
   padding: 0;
 }
 
-
 .tab-body {
   display: grid;
   gap: 14px;
+}
+
+.bottom-status-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 30px;
+  padding: 0 10px;
+  border-top: 1px solid var(--h-border);
+  background: var(--h-card);
+  color: var(--h-muted);
+  font-size: 12px;
+}
+
+.bottom-status-item {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bottom-status-item svg {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.bottom-status-config {
+  flex: 1 1 auto;
+  max-width: min(620px, calc(100% - 300px));
+  height: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.bottom-status-config span,
+.bottom-status-config strong {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+}
+
+.bottom-status-config strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--h-text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.bottom-status-update {
+  flex: 0 0 auto;
+}
+
+.bottom-status-update.running strong,
+.bottom-status-update.running svg {
+  color: #1d9d58;
+}
+
+.bottom-status-update.warning strong,
+.bottom-status-update.warning svg {
+  color: var(--h-accent);
 }

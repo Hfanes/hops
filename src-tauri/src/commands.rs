@@ -3,7 +3,7 @@ use crate::browsers::{
     validate_manual_browser_request,
 };
 use crate::config::{
-    load_or_init_config, normalize_config, reset_config_with_detected_browsers,
+    config_file_path, load_or_init_config, normalize_config, reset_config_with_detected_browsers,
     save_config_internal, validate_config,
 };
 use crate::models::{
@@ -25,6 +25,11 @@ use tauri::{AppHandle, State};
 #[tauri::command]
 pub(crate) fn load_config(app: AppHandle) -> Result<AppConfig, String> {
     load_or_init_config(&app, true)
+}
+
+#[tauri::command]
+pub(crate) fn get_config_file_path(app: AppHandle) -> Result<String, String> {
+    config_file_path(&app).map(|path| path.display().to_string())
 }
 
 #[tauri::command]

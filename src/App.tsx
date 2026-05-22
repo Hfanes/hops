@@ -4,6 +4,7 @@ import {
   checkForAppUpdate,
   getBrowserRegistrationStatus,
   getAppAboutInfo,
+  getConfigFilePath,
   getStartWithWindowsEnabled,
   installAvailableUpdate,
   listRunningBrowserIds,
@@ -27,6 +28,7 @@ import { PatternTypePicker } from "./components/common/PatternTypePicker";
 import { StatusBanner } from "./components/common/StatusBanner";
 import { ScrollTopButton } from "./components/layout/ScrollTopButton";
 import { SidebarNav } from "./components/layout/SidebarNav";
+import { BottomStatusBar } from "./components/layout/BottomStatusBar";
 import { Topbar } from "./components/layout/Topbar";
 import { AboutPanel } from "./features/about/AboutPanel";
 import { BrowsersTab } from "./features/browsers/BrowsersTab";
@@ -88,6 +90,7 @@ function App() {
   const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
     useState(false);
   const [aboutInfo, setAboutInfo] = useState<AppAboutInfo | null>(null);
+  const [configPath, setConfigPath] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
     null,
   );
@@ -183,10 +186,18 @@ function App() {
         applyLoadedConfig(loaded);
         setStatus({ kind: "success", text: "Configuration loaded." });
 
-        const runningIds = await listRunningBrowserIds();
+        const [runningIds, loadedConfigPath, nextAboutInfo] = await Promise.all([
+          listRunningBrowserIds(),
+          getConfigFilePath(),
+          getAppAboutInfo(),
+        ]);
         setRunningBrowserIds(new Set(runningIds));
+        setConfigPath(loadedConfigPath);
+        setAboutInfo(nextAboutInfo);
         await refreshRegistrationStatus();
         await refreshStartWithWindowsStatus();
+
+        void refreshStatusBarUpdate();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setStatus({ kind: "error", text: `Failed to load config: ${message}` });
@@ -1525,6 +1536,17 @@ function App() {
     }
   }
 
+  async function refreshStatusBarUpdate() {
+    setIsCheckingUpdate(true);
+    try {
+      setUpdateStatus(await checkForAppUpdate());
+    } catch (error) {
+      console.warn("Could not check for updates.", error);
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }
+
   async function updateApp() {
     setIsInstallingUpdate(true);
     try {
@@ -1559,7 +1581,7 @@ function App() {
   const onboardingPanelClassName =
     "grid min-h-screen grid-cols-1 bg-[var(--h-bg)]";
   const sidebarClassName =
-    "sticky top-0 flex h-screen min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
+    "sticky top-0 flex h-screen min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 pb-12 text-[#FDF6E3]";
   const contentClassName = "content-area min-h-screen min-w-0 p-4 md:p-6";
   const topbarClassName =
     "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
@@ -1579,6 +1601,15 @@ function App() {
   );
 
   const topButton = <ScrollTopButton onClick={scrollCurrentPageToTop} />;
+
+  const bottomStatusBar = (
+    <BottomStatusBar
+      configPath={configPath}
+      updateStatus={updateStatus}
+      isCheckingUpdate={isCheckingUpdate}
+      appVersion={aboutInfo?.version ?? null}
+    />
+  );
 
   const statusBanner = (
     <StatusBanner
@@ -1853,6 +1884,7 @@ function App() {
             />
           </div>
         </section>
+        {bottomStatusBar}
       </main>
     );
   }
@@ -1995,6 +2027,7 @@ function App() {
           {topButton}
         </div>
       </section>
+      {bottomStatusBar}
     </main>
   );
 }

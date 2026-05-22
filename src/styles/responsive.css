@@ -9,7 +9,27 @@
   }
 
   .content-area {
-    padding: 14px;
+    padding: 14px 14px 70px;
+  }
+
+  .bottom-status-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+    height: auto;
+    min-height: 46px;
+    padding: 5px 10px;
+  }
+
+  .bottom-status-config {
+    max-width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+    width: 100%;
+  }
+
+  .bottom-status-update {
+    width: 100%;
   }
 
   .topbar,
