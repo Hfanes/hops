@@ -1,4 +1,5 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 import type {
   BrowserConfig,
   BrowserRegistrationStatus,
@@ -52,6 +53,9 @@ export function SettingsTab({
   onUnregisterBrowserIntegration: () => void;
   onRefreshRegistrationStatus: () => void;
 }) {
+  const [isRegistrationHelpVisible, setIsRegistrationHelpVisible] =
+    useState(false);
+
   return (
     <section className="tab-body">
       <article className="card">
@@ -333,21 +337,40 @@ export function SettingsTab({
           </button>
         </div>
 
-        <p className="setting-help">
-          Register writes only to <code>HKCU</code> (current user) so no admin
-          rights are needed. Unregister removes those same keys.
-        </p>
-        <p className="setting-help">
-          Before unregistering, switch HTTP/HTTPS defaults away from Hops in
-          Windows to avoid stale associations.
-        </p>
-        <p className="setting-help">
-          Keys touched: <code>HKCU\Software\Classes\HopsURL</code>,{" "}
-          <code>HKCU\Software\Classes\HopsHTML</code>,{" "}
-          <code>HKCU\Software\Classes\Hops</code>,{" "}
-          <code>HKCU\Software\Hops\Capabilities</code>,{" "}
-          <code>HKCU\Software\RegisteredApplications\Hops</code>.
-        </p>
+        <button
+          type="button"
+          className="text-toggle"
+          aria-expanded={isRegistrationHelpVisible}
+          aria-controls="registration-help"
+          onClick={() => setIsRegistrationHelpVisible((current) => !current)}
+        >
+          {isRegistrationHelpVisible ? "Show less" : "Show more"}
+          {isRegistrationHelpVisible ? (
+            <FiChevronUp aria-hidden="true" />
+          ) : (
+            <FiChevronDown aria-hidden="true" />
+          )}
+        </button>
+
+        {isRegistrationHelpVisible ? (
+          <div id="registration-help">
+            <p className="setting-help">
+              Register writes only to <code>HKCU</code> (current user) so no
+              admin rights are needed. Unregister removes those same keys.
+            </p>
+            <p className="setting-help">
+              Before unregistering, switch HTTP/HTTPS defaults away from Hops in
+              Windows to avoid stale associations.
+            </p>
+            <p className="setting-help">
+              Keys touched: <code>HKCU\Software\Classes\HopsURL</code>,{" "}
+              <code>HKCU\Software\Classes\HopsHTML</code>,{" "}
+              <code>HKCU\Software\Classes\Hops</code>,{" "}
+              <code>HKCU\Software\Hops\Capabilities</code>,{" "}
+              <code>HKCU\Software\RegisteredApplications\Hops</code>.
+            </p>
+          </div>
+        ) : null}
       </article>
     </section>
   );
