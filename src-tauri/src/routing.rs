@@ -1,4 +1,4 @@
-use crate::browsers::{is_browser_running, running_processes, validate_browser_for_launch};
+use crate::browsers::{validate_browser_for_launch, RunningProcessSnapshot};
 use crate::models::{
     AppConfig, BrowserConfig, RouteAction, RouteDecision, RuleConfig, RulePatternType,
 };
@@ -6,24 +6,23 @@ use crate::models::{
 use crate::CREATE_NO_WINDOW;
 use globset::GlobBuilder;
 use regex::Regex;
-use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use url::Url;
 
 pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
-    let mut running = RunningProcessSnapshot::new(|| running_processes().unwrap_or_default());
+    let mut running = RunningProcessSnapshot::current();
     resolve_route_with_running_processes(config, url, &mut running)
 }
 
-fn resolve_route_with_running_processes<F>(
+pub(crate) fn resolve_route_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
     running: &mut RunningProcessSnapshot<F>,
 ) -> Result<RouteDecision, String>
 where
-    F: FnMut() -> HashSet<String>,
+    F: FnMut() -> std::collections::HashSet<String>,
 {
     if config.always_show_picker {
         return Ok(picker_decision("always_show_picker"));
@@ -101,31 +100,6 @@ where
     }
 
     Ok(picker_decision("no_match"))
-}
-
-struct RunningProcessSnapshot<F>
-where
-    F: FnMut() -> HashSet<String>,
-{
-    running: Option<HashSet<String>>,
-    load: F,
-}
-
-impl<F> RunningProcessSnapshot<F>
-where
-    F: FnMut() -> HashSet<String>,
-{
-    fn new(load: F) -> Self {
-        Self {
-            running: None,
-            load,
-        }
-    }
-
-    fn is_browser_running(&mut self, browser: &BrowserConfig) -> bool {
-        let running = self.running.get_or_insert_with(|| (self.load)());
-        is_browser_running(browser, running)
-    }
 }
 
 pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
@@ -275,6 +249,7 @@ pub(crate) fn open_url_with_browser(
 mod tests {
     use super::*;
     use crate::models::{BrowserConfig, BrowserSource, RuleConfig, ThemePreference};
+    use std::collections::HashSet;
 
     fn test_rule(pattern_type: RulePatternType, pattern: &str) -> RuleConfig {
         RuleConfig {
