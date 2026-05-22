@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
   checkForAppUpdate,
@@ -66,6 +67,8 @@ import type {
   ThemePreference,
 } from "./types";
 import "./styles/App.css";
+
+const RUNNING_STATE_REFRESH_THROTTLE_MS = 1000;
 
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -177,6 +180,8 @@ function App() {
   const browserSaveTimersRef = useRef<Record<string, number>>({});
   const settingsSaveTimerRef = useRef<number | null>(null);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
+  const isRunningStateRefreshInFlightRef = useRef(false);
+  const lastRunningStateRefreshAtRef = useRef(0);
 
   useEffect(() => {
     configRef.current = config;
@@ -278,6 +283,38 @@ function App() {
 
     void refreshAbout(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenFocus: (() => void) | null = null;
+
+    try {
+      void getCurrentWindow()
+        .onFocusChanged(({ payload }) => {
+          if (payload) {
+            void refreshRunningState();
+          }
+        })
+        .then((unlisten) => {
+          if (disposed) {
+            unlisten();
+            return;
+          }
+
+          unlistenFocus = unlisten;
+        })
+        .catch((error) => {
+          console.warn("Could not listen for Hops focus changes.", error);
+        });
+    } catch (error) {
+      console.warn("Could not access the current Hops window.", error);
+    }
+
+    return () => {
+      disposed = true;
+      unlistenFocus?.();
+    };
+  }, []);
 
   function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
     let nextConfig: AppConfig | null = null;
@@ -837,12 +874,30 @@ function App() {
     }
   }
 
-  async function refreshRunningState() {
+  async function refreshRunningState({ force = false } = {}) {
+    if (!configRef.current || isRunningStateRefreshInFlightRef.current) {
+      return;
+    }
+
+    const now = Date.now();
+    if (
+      !force &&
+      now - lastRunningStateRefreshAtRef.current <
+        RUNNING_STATE_REFRESH_THROTTLE_MS
+    ) {
+      return;
+    }
+
+    isRunningStateRefreshInFlightRef.current = true;
+    lastRunningStateRefreshAtRef.current = now;
+
     try {
       const runningIds = await listRunningBrowserIds();
       setRunningBrowserIds(new Set(runningIds));
     } catch {
       // Running-state refresh should be non-blocking.
+    } finally {
+      isRunningStateRefreshInFlightRef.current = false;
     }
   }
 
@@ -852,7 +907,7 @@ function App() {
       const refreshed = await refreshBrowsers();
       applyLoadedConfig(refreshed);
       setStatus({ kind: "success", text: "Browser detection refreshed." });
-      await refreshRunningState();
+      await refreshRunningState({ force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Refresh failed: ${message}` });
@@ -1469,7 +1524,7 @@ function App() {
         kind: "success",
         text: "Configuration reset. Rules and manual browsers were cleared, and detected browsers were restored.",
       });
-      await refreshRunningState();
+      await refreshRunningState({ force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({
@@ -1507,7 +1562,7 @@ function App() {
           ? "Configuration reset. Onboarding restarted from step 1."
           : "Onboarding restarted with your current configuration intact.",
       });
-      await refreshRunningState();
+      await refreshRunningState({ force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({
@@ -1564,7 +1619,7 @@ function App() {
       } else {
         setStatus({ kind: "success", text: "Routing preview updated." });
       }
-      await refreshRunningState();
+      await refreshRunningState({ force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
