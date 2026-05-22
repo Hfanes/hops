@@ -1062,6 +1062,7 @@ function App() {
     };
     const prepared = await validateManualBrowserConfig(browser, false, {
       showAlert: true,
+      allowConfirmationFlow: true,
     });
     if (!prepared) {
       return;
