@@ -7,7 +7,6 @@ body.picker-body {
 
 .picker-shell {
   height: 100vh;
-  padding: 8px;
   background: transparent;
 }
 
@@ -23,13 +22,13 @@ body.picker-body {
 
   width: 100%;
   max-width: 342px;
-  height: calc(100vh - 16px);
-  max-height: calc(100vh - 16px);
+  height: calc(100vh - 5px);
+  max-height: calc(100vh - 5px);
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 8px;
   box-sizing: border-box;
-  padding: 10px;
+  padding: 6px;
   border: 1px solid var(--picker-shadow);
   border-radius: 0;
   background: color-mix(in srgb, var(--picker-bg) 92%, transparent);
@@ -141,7 +140,7 @@ body.picker-body {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 4px 6px 0;
+  padding: 0;
   scrollbar-gutter: stable;
 }
 
@@ -161,7 +160,7 @@ body.picker-body {
 }
 
 .picker-menu-item {
-  width: calc(100% - 6px);
+  width: calc(100% - 4px);
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -176,7 +175,7 @@ body.picker-body {
   text-align: left;
   padding: 8px 10px;
   box-shadow: 4px 4px 0 var(--picker-shadow);
-  margin: 2px 0 2px 2px;
+  margin: 1px 0 1px 1px;
 }
 
 .picker-menu-item:hover:not(:disabled),
