@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, WebviewUrl,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
     WebviewWindowBuilder,
 };
 
@@ -331,9 +331,9 @@ pub(crate) fn show_picker_window(
     let window = ensure_picker_window(app)?;
     let menu_height = picker_window_height(session.browsers.len());
     window
-        .set_size(Size::Physical(PhysicalSize::new(
-            PICKER_MENU_WIDTH,
-            menu_height,
+        .set_size(Size::Logical(LogicalSize::new(
+            PICKER_MENU_WIDTH as f64,
+            menu_height as f64,
         )))
         .map_err(|error| format!("Could not resize picker window during picker show: {error}"))?;
 
