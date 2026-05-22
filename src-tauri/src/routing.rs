@@ -6,14 +6,25 @@ use crate::models::{
 use crate::CREATE_NO_WINDOW;
 use globset::GlobBuilder;
 use regex::Regex;
+use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use url::Url;
 
 pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
-    let running = running_processes().unwrap_or_default();
+    let mut running = RunningProcessSnapshot::new(|| running_processes().unwrap_or_default());
+    resolve_route_with_running_processes(config, url, &mut running)
+}
 
+fn resolve_route_with_running_processes<F>(
+    config: &AppConfig,
+    url: &str,
+    running: &mut RunningProcessSnapshot<F>,
+) -> Result<RouteDecision, String>
+where
+    F: FnMut() -> HashSet<String>,
+{
     if config.always_show_picker {
         return Ok(picker_decision("always_show_picker"));
     }
@@ -31,39 +42,38 @@ pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecisi
             continue;
         };
 
-        if is_browser_running(browser, &running) || config.use_defaults_when_not_running {
-            if is_browser_running(browser, &running) {
-                return Ok(open_decision(
-                    browser,
-                    rule.private_mode,
-                    Some(rule.id.clone()),
-                    "rule_match_running",
-                ));
-            }
+        let browser_is_running = running.is_browser_running(browser);
+        if browser_is_running {
+            return Ok(open_decision(
+                browser,
+                rule.private_mode,
+                Some(rule.id.clone()),
+                "rule_match_running",
+            ));
+        }
 
-            if config.use_defaults_when_not_running {
-                if let Some(default_browser_id) = config.default_browser_id.as_ref() {
-                    if let Some(default_browser) = config
-                        .browsers
-                        .iter()
-                        .find(|browser| &browser.id == default_browser_id && !browser.is_hidden)
-                    {
-                        return Ok(open_decision(
-                            default_browser,
-                            rule.private_mode,
-                            Some(rule.id.clone()),
-                            "rule_browser_not_running_use_default",
-                        ));
-                    }
+        if config.use_defaults_when_not_running {
+            if let Some(default_browser_id) = config.default_browser_id.as_ref() {
+                if let Some(default_browser) = config
+                    .browsers
+                    .iter()
+                    .find(|browser| &browser.id == default_browser_id && !browser.is_hidden)
+                {
+                    return Ok(open_decision(
+                        default_browser,
+                        rule.private_mode,
+                        Some(rule.id.clone()),
+                        "rule_browser_not_running_use_default",
+                    ));
                 }
-
-                return Ok(picker_decision_for_browser(
-                    browser,
-                    rule.private_mode,
-                    Some(rule.id.clone()),
-                    "rule_browser_not_running_no_default",
-                ));
             }
+
+            return Ok(picker_decision_for_browser(
+                browser,
+                rule.private_mode,
+                Some(rule.id.clone()),
+                "rule_browser_not_running_no_default",
+            ));
         }
 
         return Ok(picker_decision_for_browser(
@@ -83,7 +93,7 @@ pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecisi
             return Ok(picker_decision("default_browser_missing"));
         };
 
-        if is_browser_running(browser, &running) || config.use_defaults_when_not_running {
+        if config.use_defaults_when_not_running || running.is_browser_running(browser) {
             return Ok(open_decision(browser, false, None, "default_browser"));
         }
 
@@ -91,6 +101,31 @@ pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecisi
     }
 
     Ok(picker_decision("no_match"))
+}
+
+struct RunningProcessSnapshot<F>
+where
+    F: FnMut() -> HashSet<String>,
+{
+    running: Option<HashSet<String>>,
+    load: F,
+}
+
+impl<F> RunningProcessSnapshot<F>
+where
+    F: FnMut() -> HashSet<String>,
+{
+    fn new(load: F) -> Self {
+        Self {
+            running: None,
+            load,
+        }
+    }
+
+    fn is_browser_running(&mut self, browser: &BrowserConfig) -> bool {
+        let running = self.running.get_or_insert_with(|| (self.load)());
+        is_browser_running(browser, running)
+    }
 }
 
 pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
@@ -278,6 +313,38 @@ mod tests {
         }
     }
 
+    fn resolve_route_with_empty_running_set(
+        config: &AppConfig,
+        url: &str,
+    ) -> (RouteDecision, usize) {
+        let mut scan_count = 0;
+        let decision = {
+            let mut running = RunningProcessSnapshot::new(|| {
+                scan_count += 1;
+                HashSet::new()
+            });
+
+            resolve_route_with_running_processes(config, url, &mut running)
+                .expect("route should resolve")
+        };
+
+        (decision, scan_count)
+    }
+
+    #[test]
+    fn always_show_picker_returns_without_running_process_scan() {
+        let mut config = test_app_config(vec![manual_browser("chrome", "Chrome")]);
+        config.always_show_picker = true;
+        config.default_browser_id = Some("chrome".to_string());
+
+        let (decision, scan_count) =
+            resolve_route_with_empty_running_set(&config, "https://github.com/openai/codex");
+
+        assert_eq!(decision.action, RouteAction::ShowPicker);
+        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(scan_count, 0);
+    }
+
     #[test]
     fn hostname_match_is_exact() {
         let rule = test_rule(RulePatternType::Hostname, "github.com");
@@ -325,13 +392,14 @@ mod tests {
         let mut config = test_app_config(vec![browser.clone()]);
         config.rules.push(rule);
 
-        let decision = resolve_route(&config, "https://github.com/openai/codex")
-            .expect("route should resolve");
+        let (decision, scan_count) =
+            resolve_route_with_empty_running_set(&config, "https://github.com/openai/codex");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
         assert_eq!(decision.browser_id.as_deref(), Some(browser.id.as_str()));
         assert!(decision.private_mode);
         assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(scan_count, 1);
     }
 
     #[test]
@@ -347,8 +415,8 @@ mod tests {
         config.default_browser_id = Some(default_browser.id.clone());
         config.rules.push(rule);
 
-        let decision = resolve_route(&config, "https://github.com/openai/codex")
-            .expect("route should resolve");
+        let (decision, scan_count) =
+            resolve_route_with_empty_running_set(&config, "https://github.com/openai/codex");
 
         assert_eq!(decision.action, RouteAction::OpenBrowser);
         assert_eq!(
@@ -357,5 +425,39 @@ mod tests {
         );
         assert!(decision.private_mode);
         assert_eq!(decision.reason, "rule_browser_not_running_use_default");
+        assert_eq!(scan_count, 1);
+    }
+
+    #[test]
+    fn default_browser_with_default_fallback_opens_without_running_process_scan() {
+        let default_browser = manual_browser("chrome", "Chrome");
+        let mut config = test_app_config(vec![default_browser.clone()]);
+        config.use_defaults_when_not_running = true;
+        config.default_browser_id = Some(default_browser.id.clone());
+
+        let (decision, scan_count) =
+            resolve_route_with_empty_running_set(&config, "https://example.com");
+
+        assert_eq!(decision.action, RouteAction::OpenBrowser);
+        assert_eq!(decision.browser_id.as_deref(), Some("chrome"));
+        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(scan_count, 0);
+    }
+
+    #[test]
+    fn no_match_and_no_default_returns_picker_without_running_process_scan() {
+        let browser = manual_browser("chrome", "Chrome");
+        let mut rule = test_rule(RulePatternType::Hostname, "github.com");
+        rule.browser_id = browser.id.clone();
+
+        let mut config = test_app_config(vec![browser]);
+        config.rules.push(rule);
+
+        let (decision, scan_count) =
+            resolve_route_with_empty_running_set(&config, "https://example.com");
+
+        assert_eq!(decision.action, RouteAction::ShowPicker);
+        assert_eq!(decision.reason, "no_match");
+        assert_eq!(scan_count, 0);
     }
 }
