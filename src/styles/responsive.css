@@ -1,4 +1,8 @@
 @media (max-width: 800px) {
+  :root {
+    --bottom-status-height: 32px;
+  }
+
   .brand-copy {
     display: none;
   }
@@ -9,27 +13,25 @@
   }
 
   .content-area {
-    padding: 14px 14px 70px;
+    padding: 14px 14px calc(var(--bottom-status-height) + 24px);
   }
 
   .bottom-status-bar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 3px;
-    height: auto;
-    min-height: 46px;
-    padding: 5px 10px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    height: var(--bottom-status-height);
+    padding: 0 10px;
   }
 
   .bottom-status-config {
-    max-width: 100%;
+    max-width: calc(100% - 190px);
     justify-content: flex-start;
     text-align: left;
-    width: 100%;
   }
 
   .bottom-status-update {
-    width: 100%;
+    width: auto;
   }
 
   .topbar,

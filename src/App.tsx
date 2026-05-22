@@ -186,11 +186,9 @@ function App() {
         applyLoadedConfig(loaded);
         setStatus({ kind: "success", text: "Configuration loaded." });
 
-        const [runningIds, loadedConfigPath, nextAboutInfo] = await Promise.all([
-          listRunningBrowserIds(),
-          getConfigFilePath(),
-          getAppAboutInfo(),
-        ]);
+        const [runningIds, loadedConfigPath, nextAboutInfo] = await Promise.all(
+          [listRunningBrowserIds(), getConfigFilePath(), getAppAboutInfo()],
+        );
         setRunningBrowserIds(new Set(runningIds));
         setConfigPath(loadedConfigPath);
         setAboutInfo(nextAboutInfo);
@@ -599,7 +597,9 @@ function App() {
       void (async () => {
         try {
           let configToSave = nextConfig;
-          const browser = configToSave.browsers.find((item) => item.id === browserId);
+          const browser = configToSave.browsers.find(
+            (item) => item.id === browserId,
+          );
           if (browser) {
             const prepared = await validateManualBrowserConfig(browser, false, {
               showAlert: true,
@@ -701,7 +701,9 @@ function App() {
     void (async () => {
       try {
         let configToSave = latestConfig;
-        const browser = configToSave.browsers.find((item) => item.id === browserId);
+        const browser = configToSave.browsers.find(
+          (item) => item.id === browserId,
+        );
         if (browser) {
           const prepared = await validateManualBrowserConfig(browser, false, {
             showAlert: true,
@@ -893,7 +895,9 @@ function App() {
 
   function deleteManualBrowser(browserId: string) {
     const currentConfig = configRef.current;
-    const browser = currentConfig?.browsers.find((item) => item.id === browserId);
+    const browser = currentConfig?.browsers.find(
+      (item) => item.id === browserId,
+    );
     if (!currentConfig || !browser || browser.source !== "manual") {
       return;
     }
@@ -907,7 +911,9 @@ function App() {
     const nextConfig = applyConfigChange((current) => ({
       ...current,
       defaultBrowserId:
-        current.defaultBrowserId === browserId ? null : current.defaultBrowserId,
+        current.defaultBrowserId === browserId
+          ? null
+          : current.defaultBrowserId,
       browsers: current.browsers.filter((item) => item.id !== browserId),
       rules: current.rules.filter((rule) => rule.browserId !== browserId),
     }));
@@ -1495,7 +1501,11 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
-      if (openImmediately && error instanceof Error && error.name === "TimeoutError") {
+      if (
+        openImmediately &&
+        error instanceof Error &&
+        error.name === "TimeoutError"
+      ) {
         showFeedbackModal({
           title: "Route opening timed out",
           message: `Hops could not open the route within 10 seconds.\n\n${message}`,
@@ -1581,7 +1591,7 @@ function App() {
   const onboardingPanelClassName =
     "grid min-h-screen grid-cols-1 bg-[var(--h-bg)]";
   const sidebarClassName =
-    "sticky top-0 flex h-screen min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 pb-12 text-[#FDF6E3]";
+    "sticky top-0 flex h-[calc(100vh-var(--bottom-status-height))] min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
   const contentClassName = "content-area min-h-screen min-w-0 p-4 md:p-6";
   const topbarClassName =
     "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
@@ -1612,10 +1622,7 @@ function App() {
   );
 
   const statusBanner = (
-    <StatusBanner
-      status={status}
-      onDismiss={() => setStatus(EMPTY_STATUS)}
-    />
+    <StatusBanner status={status} onDismiss={() => setStatus(EMPTY_STATUS)} />
   );
 
   const activeFormModal =
@@ -1695,82 +1702,82 @@ function App() {
         titleId="rule-modal-title"
         onClose={() => setFormModal(null)}
       >
-          <label>
-            Pattern
-            <input
-              value={ruleDraft.pattern}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                setRuleDraft((current) => ({
-                  ...current,
-                  pattern: value,
-                }));
-              }}
-              placeholder="*.notion.so"
-            />
-          </label>
-          <PatternTypePicker
-            name="new-rule-pattern-type"
-            value={ruleDraft.patternType}
-            onChange={(value) =>
+        <label>
+          Pattern
+          <input
+            value={ruleDraft.pattern}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
               setRuleDraft((current) => ({
                 ...current,
-                patternType: value,
-              }))
-            }
+                pattern: value,
+              }));
+            }}
+            placeholder="*.notion.so"
           />
-          <label>
-            Browser
-            <select
-              value={ruleDraft.browserId}
+        </label>
+        <PatternTypePicker
+          name="new-rule-pattern-type"
+          value={ruleDraft.patternType}
+          onChange={(value) =>
+            setRuleDraft((current) => ({
+              ...current,
+              patternType: value,
+            }))
+          }
+        />
+        <label>
+          Browser
+          <select
+            value={ruleDraft.browserId}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setRuleDraft((current) => ({
+                ...current,
+                browserId: value,
+              }));
+            }}
+          >
+            <option value="">Choose browser</option>
+            {visibleBrowsers.map((browser) => (
+              <option key={browser.id} value={browser.id}>
+                {browser.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="dual-toggle">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={ruleDraft.privateMode}
               onChange={(event) => {
-                const value = event.currentTarget.value;
+                const checked = event.currentTarget.checked;
                 setRuleDraft((current) => ({
                   ...current,
-                  browserId: value,
+                  privateMode: checked,
                 }));
               }}
-            >
-              <option value="">Choose browser</option>
-              {visibleBrowsers.map((browser) => (
-                <option key={browser.id} value={browser.id}>
-                  {browser.name}
-                </option>
-              ))}
-            </select>
+            />
+            <span>Private mode</span>
           </label>
-          <div className="dual-toggle">
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={ruleDraft.privateMode}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-                  setRuleDraft((current) => ({
-                    ...current,
-                    privateMode: checked,
-                  }));
-                }}
-              />
-              <span>Private mode</span>
-            </label>
-          </div>
-          <div className="inline-actions">
-            <button
-              type="button"
-              onClick={() => void addRule()}
-              disabled={isSaving || !visibleBrowsers.length}
-            >
-              Add rule
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => setFormModal(null)}
-            >
-              Cancel
-            </button>
-          </div>
+        </div>
+        <div className="inline-actions">
+          <button
+            type="button"
+            onClick={() => void addRule()}
+            disabled={isSaving || !visibleBrowsers.length}
+          >
+            Add rule
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setFormModal(null)}
+          >
+            Cancel
+          </button>
+        </div>
       </ModalShell>
     ) : null;
 
@@ -1780,7 +1787,9 @@ function App() {
       titleId="manual-browser-confirm-title"
       onClose={() => setManualBrowserConfirmation(null)}
     >
-      <p className="setting-help">{manualBrowserConfirmation.validation.message}</p>
+      <p className="setting-help">
+        {manualBrowserConfirmation.validation.message}
+      </p>
       <label>
         Executable path
         <input value={manualBrowserConfirmation.browser.path} readOnly />
