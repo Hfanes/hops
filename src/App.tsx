@@ -317,18 +317,14 @@ function App() {
   }, []);
 
   function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
-    let nextConfig: AppConfig | null = null;
+    const currentConfig = configRef.current;
+    if (!currentConfig) {
+      return null;
+    }
 
-    setConfig((current) => {
-      if (!current) {
-        return current;
-      }
-
-      nextConfig = transform(current);
-      configRef.current = nextConfig;
-      return nextConfig;
-    });
-
+    const nextConfig = transform(currentConfig);
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
     return nextConfig;
   }
 
