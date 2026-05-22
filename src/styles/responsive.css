@@ -1,8 +1,4 @@
 @media (max-width: 800px) {
-  :root {
-    --bottom-status-height: 32px;
-  }
-
   .brand-copy {
     display: none;
   }
