@@ -137,6 +137,21 @@ function App() {
     kind: "error" | "warning";
     confirmLabel?: string;
   } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<
+    | {
+        kind: "manual-browser";
+        browserId: string;
+        browserName: string;
+        affectedRuleCount: number;
+      }
+    | {
+        kind: "rule";
+        ruleId: string;
+        ruleLabel: string;
+        pattern: string;
+      }
+    | null
+  >(null);
   const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
     useState(false);
 
@@ -953,6 +968,25 @@ function App() {
     });
   }
 
+  function requestDeleteManualBrowser(browserId: string) {
+    const currentConfig = configRef.current;
+    const browser = currentConfig?.browsers.find(
+      (item) => item.id === browserId,
+    );
+    if (!currentConfig || !browser || browser.source !== "manual") {
+      return;
+    }
+
+    setDeleteConfirmation({
+      kind: "manual-browser",
+      browserId,
+      browserName: browser.name,
+      affectedRuleCount: currentConfig.rules.filter(
+        (rule) => rule.browserId === browserId,
+      ).length,
+    });
+  }
+
   async function addManualBrowser() {
     const currentConfig = configRef.current;
     const name = browserDraft.name.trim();
@@ -1188,6 +1222,39 @@ function App() {
       successText: "Rule deleted.",
       errorPrefix: "Could not delete rule",
     });
+  }
+
+  function requestDeleteRule(ruleId: string) {
+    const currentConfig = configRef.current;
+    const ruleIndex = currentConfig?.rules.findIndex(
+      (item) => item.id === ruleId,
+    );
+    if (!currentConfig || ruleIndex === undefined || ruleIndex < 0) {
+      return;
+    }
+
+    const rule = currentConfig.rules[ruleIndex];
+    setDeleteConfirmation({
+      kind: "rule",
+      ruleId,
+      ruleLabel: `Rule ${ruleIndex + 1}`,
+      pattern: rule.pattern,
+    });
+  }
+
+  function confirmDelete() {
+    const confirmation = deleteConfirmation;
+    if (!confirmation) {
+      return;
+    }
+
+    setDeleteConfirmation(null);
+    if (confirmation.kind === "manual-browser") {
+      deleteManualBrowser(confirmation.browserId);
+      return;
+    }
+
+    deleteRule(confirmation.ruleId);
   }
 
   function moveRule(ruleId: string, direction: -1 | 1) {
@@ -1818,6 +1885,47 @@ function App() {
     </ModalShell>
   ) : null;
 
+  const deleteConfirmationModal = deleteConfirmation ? (
+    <ModalShell
+      title={<h3 id="delete-confirm-title">Confirm delete</h3>}
+      titleId="delete-confirm-title"
+      onClose={() => setDeleteConfirmation(null)}
+    >
+      {deleteConfirmation.kind === "manual-browser" ? (
+        <p className="setting-help">
+          Delete manual browser "{deleteConfirmation.browserName}"? This also
+          removes{" "}
+          {deleteConfirmation.affectedRuleCount === 0
+            ? "no rules"
+            : deleteConfirmation.affectedRuleCount === 1
+              ? "1 rule that targets it"
+              : `${deleteConfirmation.affectedRuleCount} rules that target it`}
+          .
+        </p>
+      ) : (
+        <p className="setting-help">
+          Delete {deleteConfirmation.ruleLabel}
+          {deleteConfirmation.pattern.trim()
+            ? ` for "${deleteConfirmation.pattern}"`
+            : ""}
+          ? This cannot be undone.
+        </p>
+      )}
+      <div className="inline-actions">
+        <button type="button" className="danger" onClick={confirmDelete}>
+          Delete
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setDeleteConfirmation(null)}
+        >
+          Cancel
+        </button>
+      </div>
+    </ModalShell>
+  ) : null;
+
   const feedbackModalElement = feedbackModal ? (
     <ModalShell
       title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
@@ -1944,6 +2052,7 @@ function App() {
 
           {activeFormModal}
           {manualBrowserConfirmationModal}
+          {deleteConfirmationModal}
           {feedbackModalElement}
 
           {statusBanner}
@@ -1993,7 +2102,7 @@ function App() {
               onUpdateBrowser={updateBrowser}
               onFlushBrowserSave={flushBrowserSave}
               onToggleBrowserHidden={toggleBrowserHidden}
-              onDeleteManualBrowser={deleteManualBrowser}
+              onDeleteManualBrowser={requestDeleteManualBrowser}
             />
           ) : null}
 
@@ -2005,7 +2114,7 @@ function App() {
               dirtyRuleIds={dirtyRuleIds}
               savingRuleIds={savingRuleIds}
               onMoveRule={moveRule}
-              onDeleteRule={deleteRule}
+              onDeleteRule={requestDeleteRule}
               onUpdateRule={updateRule}
               onSaveRule={saveRule}
             />
