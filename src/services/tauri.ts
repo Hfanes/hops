@@ -41,6 +41,10 @@ export function getConfigFilePath(): Promise<string> {
   return invoke<string>("get_config_file_path");
 }
 
+export function openConfigFolder(): Promise<void> {
+  return invoke<void>("open_config_folder");
+}
+
 export function saveConfig(config: AppConfig): Promise<AppConfig> {
   return invoke<AppConfig>("save_config", { config });
 }

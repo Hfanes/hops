@@ -33,6 +33,34 @@ pub(crate) fn get_config_file_path(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub(crate) fn open_config_folder(app: AppHandle) -> Result<(), String> {
+    let config_path = config_file_path(&app)?;
+    let config_folder = config_path
+        .parent()
+        .ok_or_else(|| "Could not resolve config folder.".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use crate::CREATE_NO_WINDOW;
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        let mut command = Command::new("explorer.exe");
+        command.arg(config_folder);
+        command
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| format!("Could not open config folder: {error}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Opening the config folder is only supported on Windows.".to_string())
+    }
+}
+
+#[tauri::command]
 pub(crate) fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
     save_config_internal(&app, config, true)
 }

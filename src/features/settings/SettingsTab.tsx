@@ -34,6 +34,7 @@ export function SettingsTab({
   onSetSettingsActionPanel,
   onResetConfig,
   onRerunOnboarding,
+  onOpenConfigFolder,
   onOpenDefaultAppsSettings,
   onRegisterBrowserIntegration,
   onUnregisterBrowserIntegration,
@@ -55,6 +56,7 @@ export function SettingsTab({
   onSetSettingsActionPanel: Dispatch<SetStateAction<SettingsActionPanel>>;
   onResetConfig: () => void;
   onRerunOnboarding: (resetFirst: boolean) => void;
+  onOpenConfigFolder: () => void;
   onOpenDefaultAppsSettings: () => void;
   onRegisterBrowserIntegration: () => void;
   onUnregisterBrowserIntegration: () => void;
@@ -169,9 +171,7 @@ export function SettingsTab({
             type="button"
             className="settings-select-control default-browser-trigger"
             aria-expanded={isDefaultBrowserPickerOpen}
-            onClick={() =>
-              setIsDefaultBrowserPickerOpen((current) => !current)
-            }
+            onClick={() => setIsDefaultBrowserPickerOpen((current) => !current)}
           >
             {selectedDefaultBrowser ? (
               <>
@@ -296,6 +296,14 @@ export function SettingsTab({
             disabled={isResettingConfig || isStartingOnboarding}
           >
             Rerun onboarding
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={onOpenConfigFolder}
+            disabled={isResettingConfig || isStartingOnboarding}
+          >
+            Open config folder
           </button>
         </div>
 
