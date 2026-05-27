@@ -10,6 +10,7 @@ import {
   installAvailableUpdate,
   listRunningBrowserIds,
   loadConfig,
+  openConfigFolder,
   openWindowsDefaultApps,
   previewRouteWithConfig,
   registerHopsAsBrowser,
@@ -18,6 +19,7 @@ import {
   routeAndOpenWithConfig,
   saveConfig,
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
+  showSettingsWindow,
   showPickerForUrl,
   unregisterHopsAsBrowser,
   validateManualBrowser,
@@ -1415,6 +1417,22 @@ function App() {
     }
   }
 
+  async function openConfigurationFolder() {
+    try {
+      await openConfigFolder();
+      setStatus({
+        kind: "success",
+        text: "Opened config folder.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus({
+        kind: "error",
+        text: `Could not open config folder: ${message}`,
+      });
+    }
+  }
+
   async function registerBrowserIntegration() {
     setIsRegistering(true);
     try {
@@ -1471,11 +1489,13 @@ function App() {
 
       const saved = await saveConfig(nextConfig);
       applyLoadedConfig(saved);
+      setActiveTab("settings");
+      await showSettingsWindow();
       setStatus({
         kind: "success",
         text: onboardingStartWithWindows
-          ? "Onboarding completed. Hops will start with Windows and stay in tray."
-          : "Onboarding completed. Hops will stay in tray when opened.",
+          ? "Onboarding completed. Hops will start with Windows. Review your settings before closing this window."
+          : "Onboarding completed. Review your settings before closing this window.",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2133,6 +2153,7 @@ function App() {
               onRerunOnboarding={(resetFirst) =>
                 void handleRerunOnboarding(resetFirst)
               }
+              onOpenConfigFolder={() => void openConfigurationFolder()}
               onOpenDefaultAppsSettings={openDefaultAppsSettings}
               onRegisterBrowserIntegration={() =>
                 void registerBrowserIntegration()
