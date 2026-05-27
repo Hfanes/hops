@@ -38,6 +38,7 @@ pub(crate) enum BrowserFamily {
 struct KnownBrowserDefinition {
     executable_aliases: &'static [&'static str],
     display_name: &'static str,
+    icon_key: &'static str,
     family: BrowserFamily,
     private_flag_override: Option<&'static str>,
     use_family_private_flag: bool,
@@ -49,6 +50,7 @@ pub(crate) struct ResolvedBrowserMetadata {
     pub(crate) name: String,
     pub(crate) family: BrowserFamily,
     pub(crate) private_flag: Option<String>,
+    pub(crate) icon_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +59,7 @@ pub(crate) struct BrowserRecognitionResult {
     pub(crate) name: String,
     pub(crate) family: Option<BrowserFamily>,
     pub(crate) private_flag: Option<String>,
+    pub(crate) icon_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,13 +81,25 @@ pub(crate) fn hydrate_detected_browser_defaults(config: &mut AppConfig) {
     }
 }
 
+pub(crate) fn hydrate_browser_icon_keys(config: &mut AppConfig) {
+    for browser in &mut config.browsers {
+        if browser.icon_key.is_some() {
+            continue;
+        }
+
+        let resolved = resolve_browser_metadata(&browser.path, Some(browser.name.as_str()), None);
+        browser.icon_key = resolved.icon_key.or_else(|| Some("generic".to_string()));
+    }
+}
+
 pub(crate) fn normalize_manual_browser_entries(config: &mut AppConfig) {
     for browser in &mut config.browsers {
         if browser.source != BrowserSource::Manual {
             continue;
         }
 
-        let Ok(recognition) = classify_browser_path(&browser.path, Some(browser.name.as_str())) else {
+        let Ok(recognition) = classify_browser_path(&browser.path, Some(browser.name.as_str()))
+        else {
             continue;
         };
 
@@ -296,6 +311,7 @@ pub(crate) fn build_detected_browser(
         name: metadata.name,
         path: path.to_string(),
         private_flag: metadata.private_flag,
+        icon_key: metadata.icon_key,
         manual_trust: None,
         source: BrowserSource::Detected,
         is_hidden: false,
@@ -412,6 +428,7 @@ pub(crate) fn validate_manual_browser_request(
         family: recognition
             .family
             .and_then(|family| browser_family_key(family).map(str::to_string)),
+        icon_key: recognition.icon_key.or_else(|| Some("generic".to_string())),
         requires_confirmation,
         message,
     })
@@ -433,6 +450,7 @@ pub(crate) fn resolve_browser_metadata(
             name: definition.display_name.to_string(),
             family: definition.family,
             private_flag: resolved_private_flag_for_definition(definition),
+            icon_key: Some(definition.icon_key.to_string()),
         };
     }
 
@@ -446,6 +464,7 @@ pub(crate) fn resolve_browser_metadata(
             name: definition.display_name.to_string(),
             family: definition.family,
             private_flag: resolved_private_flag_for_definition(definition),
+            icon_key: Some(definition.icon_key.to_string()),
         };
     }
 
@@ -457,6 +476,7 @@ pub(crate) fn resolve_browser_metadata(
             name: definition.display_name.to_string(),
             family: definition.family,
             private_flag: resolved_private_flag_for_definition(definition),
+            icon_key: Some(definition.icon_key.to_string()),
         };
     }
 
@@ -470,6 +490,7 @@ pub(crate) fn resolve_browser_metadata(
         name,
         family,
         private_flag: default_private_flag_for_family(family),
+        icon_key: None,
     }
 }
 
@@ -493,6 +514,7 @@ pub(crate) fn classify_browser_path(
             name: metadata.name,
             family: Some(metadata.family),
             private_flag: metadata.private_flag,
+            icon_key: metadata.icon_key,
         });
     }
 
@@ -509,33 +531,46 @@ pub(crate) fn classify_browser_path(
             name: "Tor Browser".to_string(),
             family: Some(BrowserFamily::Firefox),
             private_flag: None,
+            icon_key: Some("tor".to_string()),
         });
     }
 
-    if firefox_family_tokens().iter().any(|token| haystack.contains(token)) {
+    if firefox_family_tokens()
+        .iter()
+        .any(|token| haystack.contains(token))
+    {
         return Ok(BrowserRecognitionResult {
             recognition: BrowserRecognition::RecognizedFamily,
             name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
             family: Some(BrowserFamily::Firefox),
             private_flag: default_private_flag_for_family(BrowserFamily::Firefox),
+            icon_key: browser_family_key(BrowserFamily::Firefox).map(str::to_string),
         });
     }
 
-    if edge_family_tokens().iter().any(|token| haystack.contains(token)) {
+    if edge_family_tokens()
+        .iter()
+        .any(|token| haystack.contains(token))
+    {
         return Ok(BrowserRecognitionResult {
             recognition: BrowserRecognition::RecognizedFamily,
             name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
             family: Some(BrowserFamily::Edge),
             private_flag: default_private_flag_for_family(BrowserFamily::Edge),
+            icon_key: browser_family_key(BrowserFamily::Edge).map(str::to_string),
         });
     }
 
-    if opera_family_tokens().iter().any(|token| haystack.contains(token)) {
+    if opera_family_tokens()
+        .iter()
+        .any(|token| haystack.contains(token))
+    {
         return Ok(BrowserRecognitionResult {
             recognition: BrowserRecognition::RecognizedFamily,
             name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
             family: Some(BrowserFamily::Opera),
             private_flag: default_private_flag_for_family(BrowserFamily::Opera),
+            icon_key: browser_family_key(BrowserFamily::Opera).map(str::to_string),
         });
     }
 
@@ -548,6 +583,7 @@ pub(crate) fn classify_browser_path(
             name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
             family: Some(BrowserFamily::Chromium),
             private_flag: default_private_flag_for_family(BrowserFamily::Chromium),
+            icon_key: browser_family_key(BrowserFamily::Chromium).map(str::to_string),
         });
     }
 
@@ -556,6 +592,7 @@ pub(crate) fn classify_browser_path(
         name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
         family: None,
         private_flag: None,
+        icon_key: Some("generic".to_string()),
     })
 }
 
@@ -630,21 +667,20 @@ fn validate_private_flag_value(
 ) -> Result<Option<String>, String> {
     let trimmed = private_flag.map(str::trim).filter(|flag| !flag.is_empty());
     match recognition.recognition {
-        BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => match (
-            trimmed,
-            recognition.private_flag.as_deref(),
-        ) {
-            (Some(flag), Some(expected)) if flag != expected => Err(format!(
-                "Browser '{}' only allows the private flag '{}'.",
-                browser_name, expected
-            )),
-            (_, Some(expected)) => Ok(Some(expected.to_string())),
-            (Some(_), None) => Err(format!(
-                "Browser '{}' does not support a configured private flag.",
-                browser_name
-            )),
-            (None, None) => Ok(None),
-        },
+        BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => {
+            match (trimmed, recognition.private_flag.as_deref()) {
+                (Some(flag), Some(expected)) if flag != expected => Err(format!(
+                    "Browser '{}' only allows the private flag '{}'.",
+                    browser_name, expected
+                )),
+                (_, Some(expected)) => Ok(Some(expected.to_string())),
+                (Some(_), None) => Err(format!(
+                    "Browser '{}' does not support a configured private flag.",
+                    browser_name
+                )),
+                (None, None) => Ok(None),
+            }
+        }
         BrowserRecognition::UnverifiedManual => {
             if trimmed.is_some() {
                 return Err(format!(
@@ -672,14 +708,7 @@ fn preferred_browser_name(display_name_hint: &str, path: &str) -> String {
 }
 
 fn chromium_family_tokens() -> &'static [&'static str] {
-    &[
-        "chromium",
-        "chrome",
-        "brave",
-        "vivaldi",
-        "arc",
-        "helium",
-    ]
+    &["chromium", "chrome", "brave", "vivaldi", "arc", "helium"]
 }
 
 fn firefox_family_tokens() -> &'static [&'static str] {
@@ -703,7 +732,7 @@ fn opera_family_tokens() -> &'static [&'static str] {
 
 fn browser_family_key(family: BrowserFamily) -> Option<&'static str> {
     match family {
-        BrowserFamily::Chromium => Some("chromium"),
+        BrowserFamily::Chromium => Some("chrome"),
         BrowserFamily::Firefox => Some("firefox"),
         BrowserFamily::Edge => Some("edge"),
         BrowserFamily::Opera => Some("opera"),
@@ -749,6 +778,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["chrome", "chromium", "chrome_proxy"],
             display_name: "Google Chrome",
+            icon_key: "chrome",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -757,6 +787,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &[],
             display_name: "Tor Browser",
+            icon_key: "tor",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: false,
@@ -765,6 +796,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["firefox"],
             display_name: "Mozilla Firefox",
+            icon_key: "firefox",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -773,6 +805,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["librewolf"],
             display_name: "LibreWolf",
+            icon_key: "librewolf",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -781,6 +814,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["waterfox"],
             display_name: "Waterfox",
+            icon_key: "generic",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -789,6 +823,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["floorp"],
             display_name: "Floorp",
+            icon_key: "floorp",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -797,6 +832,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["zen"],
             display_name: "Zen",
+            icon_key: "zen",
             family: BrowserFamily::Firefox,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -805,6 +841,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["msedge"],
             display_name: "Microsoft Edge",
+            icon_key: "edge",
             family: BrowserFamily::Edge,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -813,6 +850,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["brave", "bravebrowser", "brave-browser"],
             display_name: "Brave",
+            icon_key: "brave",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -821,6 +859,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["opera", "launcher"],
             display_name: "Opera",
+            icon_key: "opera",
             family: BrowserFamily::Opera,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -829,6 +868,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["vivaldi"],
             display_name: "Vivaldi",
+            icon_key: "vivaldi",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -837,6 +877,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["arc"],
             display_name: "Arc",
+            icon_key: "arc",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -845,6 +886,7 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
         KnownBrowserDefinition {
             executable_aliases: &["helium"],
             display_name: "Helium",
+            icon_key: "helium",
             family: BrowserFamily::Chromium,
             private_flag_override: None,
             use_family_private_flag: true,
@@ -1100,6 +1142,71 @@ mod tests {
     }
 
     #[test]
+    fn known_browser_definitions_have_icon_keys() {
+        for definition in known_browser_definitions() {
+            assert!(
+                !definition.icon_key.trim().is_empty(),
+                "{} should have an icon key",
+                definition.display_name
+            );
+        }
+    }
+
+    #[test]
+    fn known_browser_metadata_gets_specific_icon_keys() {
+        for (path, name, icon_key) in [
+            (
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "Google Chrome",
+                "chrome",
+            ),
+            (
+                "C:\\Users\\Hugo\\Desktop\\Tor Browser\\Browser\\firefox.exe",
+                "Tor Browser",
+                "tor",
+            ),
+            (
+                "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+                "Mozilla Firefox",
+                "firefox",
+            ),
+            ("C:\\Program Files\\LibreWolf\\librewolf.exe", "LibreWolf", "librewolf"),
+            ("C:\\Program Files\\Waterfox\\waterfox.exe", "Waterfox", "generic"),
+            ("C:\\Program Files\\Floorp\\floorp.exe", "Floorp", "floorp"),
+            ("C:\\Program Files\\Zen Browser\\zen.exe", "Zen", "zen"),
+            (
+                "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+                "Microsoft Edge",
+                "edge",
+            ),
+            (
+                "C:\\Users\\Hugo\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                "Brave",
+                "brave",
+            ),
+            (
+                "C:\\Users\\Hugo\\AppData\\Local\\Programs\\Opera\\opera.exe",
+                "Opera",
+                "opera",
+            ),
+            (
+                "C:\\Users\\Hugo\\AppData\\Local\\Vivaldi\\Application\\vivaldi.exe",
+                "Vivaldi",
+                "vivaldi",
+            ),
+            ("C:\\Tools\\Arc\\arc.exe", "Arc", "arc"),
+            (
+                "C:\\Program Files\\imput\\Helium\\Application\\chrome.exe",
+                "Helium",
+                "helium",
+            ),
+        ] {
+            let metadata = resolve_browser_metadata(path, Some(name), None);
+            assert_eq!(metadata.icon_key.as_deref(), Some(icon_key));
+        }
+    }
+
+    #[test]
     fn firefox_family_metadata_gets_private_window_flag() {
         for browser in [
             (
@@ -1153,6 +1260,7 @@ mod tests {
             name: "LibreWolf Custom".to_string(),
             path: path.to_string(),
             private_flag: Some("--my-private".to_string()),
+            icon_key: Some("librewolf".to_string()),
             manual_trust: Some(ManualBrowserTrust::Verified),
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -1214,6 +1322,7 @@ mod tests {
                 name: "Firefox-F0DC299D809B9700".to_string(),
                 path: "C:\\Program Files\\Zen Browser\\zen.exe".to_string(),
                 private_flag: None,
+                icon_key: None,
                 manual_trust: None,
                 source: BrowserSource::Detected,
                 is_hidden: false,
@@ -1223,6 +1332,7 @@ mod tests {
                 name: "LibreWolf".to_string(),
                 path: "C:\\Program Files\\LibreWolf\\librewolf.exe".to_string(),
                 private_flag: None,
+                icon_key: None,
                 manual_trust: None,
                 source: BrowserSource::Detected,
                 is_hidden: false,
@@ -1249,6 +1359,7 @@ mod tests {
             name: "Portable Chrome".to_string(),
             path: path.to_string_lossy().to_string(),
             private_flag: Some("--incognito".to_string()),
+            icon_key: Some("chrome".to_string()),
             manual_trust: Some(ManualBrowserTrust::Verified),
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -1270,6 +1381,7 @@ mod tests {
             name: "Definitely Not A Browser".to_string(),
             path: path.to_string_lossy().to_string(),
             private_flag: None,
+            icon_key: Some("generic".to_string()),
             manual_trust: None,
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -1291,6 +1403,7 @@ mod tests {
             name: "Firefox".to_string(),
             path: path.to_string_lossy().to_string(),
             private_flag: Some("--profile".to_string()),
+            icon_key: Some("firefox".to_string()),
             manual_trust: Some(ManualBrowserTrust::Verified),
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -1331,6 +1444,7 @@ mod tests {
         assert_eq!(validated.recognition, BrowserRecognition::Known);
         assert_eq!(validated.manual_trust, Some(ManualBrowserTrust::Verified));
         assert_eq!(validated.private_flag.as_deref(), Some("--private-window"));
+        assert_eq!(validated.icon_key.as_deref(), Some("floorp"));
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
@@ -1352,6 +1466,7 @@ mod tests {
             validated.manual_trust,
             Some(ManualBrowserTrust::UserConfirmed)
         );
+        assert_eq!(validated.icon_key.as_deref(), Some("generic"));
         assert!(!validated.requires_confirmation);
 
         let browser = BrowserConfig {
@@ -1359,6 +1474,7 @@ mod tests {
             name: "Custom Browser".to_string(),
             path: path.to_string_lossy().to_string(),
             private_flag: None,
+            icon_key: Some("generic".to_string()),
             manual_trust: Some(ManualBrowserTrust::UserConfirmed),
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -1377,6 +1493,7 @@ mod tests {
             name: "Custom Browser".to_string(),
             path: path.to_string_lossy().to_string(),
             private_flag: Some("--incognito".to_string()),
+            icon_key: Some("generic".to_string()),
             manual_trust: Some(ManualBrowserTrust::Verified),
             source: BrowserSource::Manual,
             is_hidden: false,

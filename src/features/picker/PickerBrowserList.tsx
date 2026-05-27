@@ -1,4 +1,5 @@
-import { FiCheck, FiExternalLink, FiLock, FiZap } from "react-icons/fi";
+import { FiCheck, FiLock, FiZap } from "react-icons/fi";
+import { BrowserIcon } from "../../components/common/BrowserIcon";
 import type { PickerBrowserEntry } from "../../types";
 
 function supportsPrivateMode(privateFlag: string | null) {
@@ -34,7 +35,7 @@ function PickerBrowserItem({
       disabled={disabled}
     >
       <span className="picker-menu-item-name">
-        <FiExternalLink aria-hidden="true" />
+        <BrowserIcon className="picker-browser-icon" iconKey={browser.iconKey} />
         {browser.name}
       </span>
       <span className="picker-menu-item-meta">

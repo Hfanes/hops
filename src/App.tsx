@@ -416,6 +416,7 @@ function App() {
       ...browser,
       name: browser.name.trim() || validation.browserName,
       privateFlag: validation.privateFlag,
+      iconKey: validation.iconKey ?? browser.iconKey ?? "generic",
       manualTrust: validation.manualTrust,
     };
   }
@@ -1056,6 +1057,7 @@ function App() {
       name,
       path,
       privateFlag: browserDraft.privateFlag.trim() || null,
+      iconKey: null,
       manualTrust: null,
       source: "manual",
       isHidden: false,

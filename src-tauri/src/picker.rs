@@ -310,6 +310,7 @@ where
             id: browser.id.clone(),
             name: browser.name.clone(),
             private_flag: browser.private_flag.clone(),
+            icon_key: browser.icon_key.clone(),
             is_default: config
                 .default_browser_id
                 .as_ref()
@@ -497,6 +498,7 @@ mod tests {
             name: name.to_string(),
             path: format!("C:\\Tools\\{name}\\browser.exe"),
             private_flag: Some("--incognito".to_string()),
+            icon_key: Some(id.to_string()),
             manual_trust: None,
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -580,6 +582,7 @@ mod tests {
 
         assert_eq!(session.browsers.len(), 1);
         assert!(!session.browsers[0].is_running);
+        assert_eq!(session.browsers[0].icon_key.as_deref(), Some("brave"));
         assert_eq!(scan_count.get(), 1);
     }
 

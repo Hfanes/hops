@@ -22,6 +22,7 @@ export interface BrowserConfig {
   name: string;
   path: string;
   privateFlag: string | null;
+  iconKey?: string | null;
   manualTrust: ManualBrowserTrust | null;
   source: BrowserSource;
   isHidden: boolean;
@@ -40,6 +41,7 @@ export interface ManualBrowserValidationResult {
   browserName: string;
   privateFlag: string | null;
   family: string | null;
+  iconKey: string | null;
   requiresConfirmation: boolean;
   message: string;
 }
@@ -95,6 +97,7 @@ export interface PickerBrowserEntry {
   id: string;
   name: string;
   privateFlag: string | null;
+  iconKey: string | null;
   isDefault: boolean;
   isRunning: boolean;
 }

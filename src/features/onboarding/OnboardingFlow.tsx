@@ -1,4 +1,5 @@
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { BrowserIcon } from "../../components/common/BrowserIcon";
 import type { AppConfig, BrowserDraft, BrowserRegistrationStatus } from "../../types";
 
 export function OnboardingFlow({
@@ -79,7 +80,10 @@ export function OnboardingFlow({
               config.browsers.map((browser) => (
                 <article key={browser.id} className="card">
                   <div className="card-title">
-                    <strong>{browser.name}</strong>
+                    <span className="browser-title">
+                      <BrowserIcon iconKey={browser.iconKey} />
+                      <strong>{browser.name}</strong>
+                    </span>
                     <div className="badges">
                       <span className="badge">{browser.source}</span>
                     </div>

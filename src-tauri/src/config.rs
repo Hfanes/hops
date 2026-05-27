@@ -1,7 +1,6 @@
 use crate::browsers::{
-    detect_browsers, hydrate_detected_browser_defaults, merge_detected_browsers,
-    normalize_manual_browser_entries,
-    validate_browser_for_launch,
+    detect_browsers, hydrate_browser_icon_keys, hydrate_detected_browser_defaults,
+    merge_detected_browsers, normalize_manual_browser_entries, validate_browser_for_launch,
 };
 use crate::models::{AppConfig, BrowserConfig, RulePatternType, ThemePreference};
 use crate::CONFIG_FILENAME;
@@ -105,6 +104,7 @@ pub(crate) fn normalize_config(config: &mut AppConfig) {
     }
 
     hydrate_detected_browser_defaults(config);
+    hydrate_browser_icon_keys(config);
     normalize_manual_browser_entries(config);
 
     let browser_ids: HashSet<String> = config
@@ -197,7 +197,9 @@ pub(crate) fn write_config_file(path: &Path, config: &AppConfig) -> Result<(), S
 mod tests {
     use super::*;
     use crate::browsers::build_detected_browser;
-    use crate::models::{AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, ThemePreference};
+    use crate::models::{
+        AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, ThemePreference,
+    };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -292,6 +294,7 @@ mod tests {
                     name: "Custom A".to_string(),
                     path: path_string.clone(),
                     private_flag: None,
+                    icon_key: Some("generic".to_string()),
                     manual_trust: Some(ManualBrowserTrust::UserConfirmed),
                     source: BrowserSource::Manual,
                     is_hidden: false,
@@ -301,6 +304,7 @@ mod tests {
                     name: "Custom B".to_string(),
                     path: path_string.clone(),
                     private_flag: None,
+                    icon_key: Some("generic".to_string()),
                     manual_trust: Some(ManualBrowserTrust::UserConfirmed),
                     source: BrowserSource::Manual,
                     is_hidden: false,
