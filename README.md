@@ -1,70 +1,129 @@
-# Hops
+<p align="center">
+  <img src="public/hops.webp" alt="Hops logo" width="96" height="96" />
+</p>
 
-Hops is a lightweight Windows tray app that routes external links to the right browser based on your rules.
+<h1 align="center">Hops</h1>
 
-Hops is not a web browser. It receives URLs, applies routing rules, and launches your chosen browser.
+<p align="center">
+  A Windows tray app that routes external links to the right browser based on your rules.
+</p>
 
-## Why Hops Must Be Registered In Windows Default Apps
+<p align="center">
+  <a href="https://github.com/Hfanes/hops">Website</a>
+  ·
+  <a href="https://github.com/Hfanes/hops/releases/latest">Download</a>
+  ·
+  <a href="https://github.com/Hfanes/hops/issues">Issues</a>
+</p>
 
-Windows only sends external `http/https` link clicks to the current default app handler.
+Hops is not a web browser. It receives `http` and `https` URLs, applies your routing rules, and launches your chosen browser.
 
-If Hops is not registered and selected as default for `http` and `https`, apps like Discord, Slack, terminal, and email clients will bypass Hops and open links with the current Windows default browser.
+This is a personal project, use it at your own risk. If Hops helps you, remember to star it, fork it, and use it.
 
-Hops writes registration under `HKCU` (current user) so:
+<p align="center">
+<a href="https://www.hfanes.com/">About me</a>
+  ·
+  <a href="https://x.com/hfa_dev">Twitter / X</a>
+  ·
+  <a href="https://github.com/Hfanes">GitHub</a>
+</p>
 
-- no admin rights are required
-- rollback is simple and local to your user profile
-- it avoids machine-wide (`HKLM`) side effects
+## Table Of Contents
 
-## Current Features
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Hotkeys](#hotkeys)
+- [Installation](#installation)
+- [Routing Logic](#routing-logic)
+- [Browser Detection And Manual Browser](#browser-detection-and-manual-browser)
+- [Windows Registry Keys Touched](#windows-registry-keys-touched)
+- [Development](#development)
+- [FAQ](#faq)
+- [Pattern Examples](#pattern-examples)
+- [License](#license)
 
-- Settings UI (React + TypeScript)
-- Automatic browser detection from Windows registry entries + known install paths
-- Manual browser support with validation and one-time trust confirmation for unknown executables
-- Duplicate executable-path protection for detected and manual browser entries
-- Safe private-mode flag handling for supported browsers
-- Per-browser `Hide from picker` support, plus delete for manual browser entries
-- Rule management
-- Rule ordering (first match wins)
-- Rule enable/disable toggle
-- Rule pattern types: hostname, hostname+subdomains, prefix, contains, full URL, glob, regex
+## Screenshots
+
+### Browsers
+
+![Browsers](public/browsers.webp)
+
+### Rules
+
+![Rules](public/rules.webp)
+
+### Settings
+
+![Settings](public/settings.webp)
+
+### Window Picker
+
+![Window picker](public/windowpicker.webp)
+
+## Features
+
+- Route external links to different browsers using rules
+- Choose a default fallback browser
+- Keep Hops running from the Windows tray
+- Start Hops automatically with Windows
+- First-run onboarding for browser detection and Windows default-app setup
+- Automatic browser detection from Windows registry entries and known install paths
+- Add manual browser entries
+- Hide browsers from the picker
+- Open supported browsers in private mode
+- Rule ordering with first-match-wins behavior
+- Rule enable / disable toggles
+- Pattern types: hostname, hostname + subdomains, prefix, contains, full URL, glob, and regex
 - Routing preview and route-and-open test tools
-- Picker window for manual browser choice when routing needs user input
-- Background tray runtime
-- Single-instance URL activation handling
-- First-run onboarding flow (browser detection, registration, default-app guidance, optional Start with Windows)
-- Optional Start with Windows setting
-- Register / unregister Hops in Windows Default Apps catalog
-- Registration status checks for `http` and `https` using the effective Windows association API, with registry fallback
+- Picker window when a route needs user input
+- Register and unregister Hops in Windows Default Apps
+- Check whether Hops is registered for `http` and `https`
+- In-app update checks from GitHub Releases
+
+## Hotkeys
+
+- `Ctrl+B`: collapse or expand the settings sidebar
+- `Ctrl+Shift` while opening a link through Hops: force the picker instead of automatic routing
+- `Alt` in the picker: open supported browsers in private mode
+- `Esc` in the picker: close the picker
+- `Esc` in dropdown-style settings controls: close the open control
+
+## Installation
+
+1. Download the latest Windows installer from [GitHub Releases](https://github.com/Hfanes/hops/releases/latest).
+2. Install Hops.
+3. Open Hops and complete onboarding.
+4. Click `Register Hops` so Windows lists Hops as a browser/default-app option.
+5. Open Windows Default Apps and set both `http` and `https` to Hops.
+6. Optionally enable `Start with Windows`.
+
+Windows only sends external `http` and `https` link clicks to the current default app handler. If Hops is not selected as the default handler, apps like Discord, Slack, terminals, and email clients will bypass Hops.
 
 ## Routing Logic
 
 Hops evaluates URLs in this order:
 
-1. `alwaysShowPicker` enabled -> picker flow
-2. First enabled matching rule:
-   - if target browser is running -> open target
-   - if `useDefaultsWhenNotRunning=false` and target is not running -> picker flow
-   - if `useDefaultsWhenNotRunning=true` and target is not running -> fallback to configured default browser
-3. Default browser fallback (same running check)
-4. Otherwise -> picker flow
+1. If `Always show picker` is enabled, open the picker.
+2. Find the first enabled matching rule.
+3. If the rule browser is running, open the URL in that browser.
+4. If the rule browser is not running and `Use defaults when browser is not already running` is enabled, use the configured default browser.
+5. If there is no usable rule target, use the configured default browser when allowed.
+6. Otherwise, open the picker.
 
-The picker opens a small window near the cursor when a route needs user input (CTRL + SHIFT + LEFT CLICK). Holding Alt opens supported browsers in private mode.
+The picker opens near the cursor when Hops needs user input. It prioritizes the matched rule browser, then the default browser, then running browsers.
 
-## Browser Detection And Manual Browser Rules
+## Browser Detection And Manual Browser
 
-Hops detects many known browsers automatically from Windows registry entries and common install locations. That includes mainstream Chromium, Firefox, Edge, and Opera variants, plus supported forks such as Brave, Vivaldi, LibreWolf, Waterfox, Floorp, Zen, Arc, Helium, and Tor Browser.
+Hops detects browsers from Windows registry entries and common install locations. It supports mainstream Chromium, Firefox, Edge, and Opera variants, plus browsers such as Brave, Vivaldi, LibreWolf, Waterfox, Floorp, Zen, Arc, Helium, and Tor Browser.
 
-Detected browsers and manual browsers are merged into one list. If you add a manual browser that points to the same executable path as a detected browser, the manual entry wins and the detected duplicate is suppressed.
+Detected browsers and manual browsers are merged into one list. If a manual browser points to the same executable path as a detected browser, the manual entry wins and the detected duplicate is suppressed.
 
-When you add a manual browser, Hops validates the executable path and classifies it into one of these trust states:
+Manual browser entries are validated before Hops launches them:
 
-- `verified`: the executable is recognized as a known browser or a recognized browser family
-- `user confirmed`: the executable is not recognized as a supported browser, but you explicitly approved it once so Hops is allowed to launch it
+- `verified`: the executable is recognized as a known browser or recognized browser family
+- `user confirmed`: the executable is unknown, but you explicitly approved it once
 
-If a manual browser path changes later, Hops revalidates it. A browser that was previously trusted may need confirmation again if the new path is no longer recognized.
-
-Hops does not allow arbitrary private-mode flags for known or recognized browsers. Instead, it derives or constrains the safe flag by browser family:
+Hops constrains private-mode flags for recognized browser families:
 
 - Chromium-family browsers use `--incognito`
 - Firefox-family browsers use `--private-window`
@@ -72,28 +131,13 @@ Hops does not allow arbitrary private-mode flags for known or recognized browser
 - Opera uses `--private`
 - Tor Browser does not get an extra private-mode flag injected
 
-Unsupported custom flags such as arbitrary profile or command-line options are rejected. Unknown executables can still be added manually, but they require an explicit confirmation first and do not accept custom private-mode flags.
-
-Hops also blocks duplicate executable paths. You cannot add the same path twice, whether it already exists as a detected browser or as another manual entry. This keeps one trusted browser record per executable and avoids duplicate picker entries.
-
-In the browser list, detected browsers can be hidden with `Hide from picker` without being removed. Manual browsers can also be hidden, and they can be deleted entirely if you no longer want Hops to keep them.
-
-## Lightweight And Performance Choices
-
-- Event-driven URL handling (no constant polling loop)
-- Single-instance plugin prevents duplicate long-lived processes
-- Tray-first behavior keeps UI hidden unless needed
-- Optional Start with Windows launches Hops hidden in the tray after onboarding
-- Windows subsystem is configured as GUI app to avoid console flashes on URL activation
-- Config stored as small JSON file at `%APPDATA%\Hops\config.json`
-- Browser list detection runs on demand (refresh / initial load), not continuously
-- Running-process check uses fast `tasklist` snapshot at route time
-- Plain config saves only write JSON; they do not trigger a running-browser rescan
+Unknown executables can be added manually after confirmation, but Hops does not accept arbitrary custom private-mode flags for them.
 
 ## Windows Registry Keys Touched
 
+Hops writes registration under `HKCU` for the current user, so admin rights are not required and rollback is local to your user profile.
+
 When clicking `Register Hops`, the app writes:
-HKCU - HKEY_CURRENT_USER
 
 - `HKCU\Software\Classes\HopsURL`
 - `HKCU\Software\Classes\HopsHTML`
@@ -101,33 +145,86 @@ HKCU - HKEY_CURRENT_USER
 - `HKCU\Software\Hops\Capabilities`
 - `HKCU\Software\RegisteredApplications` value `Hops=Software\Hops\Capabilities`
 
-This does not automatically force system defaults. You still choose Hops in Windows Default Apps for `http` and `https`.
+This does not automatically force Windows defaults. You still choose Hops in Windows Default Apps for `http` and `https`.
 
-On first launch, Hops opens an onboarding flow that guides:
-
-1. browser detection/manual browser add
-2. registering Hops in Default Apps catalog
-3. opening Windows Default Apps so you set `http` and `https` to Hops
-4. choosing whether Hops starts with Windows
-
-## Revert / Rollback
+To rollback:
 
 1. In Windows Default Apps, switch `http` and `https` away from Hops.
 2. In Hops Settings, click `Unregister Hops`.
 
 `Unregister Hops` removes the keys listed above from `HKCU`.
 
-## Dev
+## Development
 
-- Install deps: `bun install`
-- Run app: `bun run tauri dev`
-- Frontend build: `bun run build`
-- Rust check: `cargo check --manifest-path src-tauri\Cargo.toml`
-- `bun run tauri dev` itself runs under a terminal-owned dev process. Validate "no extra console window" behavior with a packaged build, not only dev mode.
+Requirements:
 
-## Documentation Policy
+- [Bun](https://bun.sh/)
+- Rust stable
+- Windows for the full desktop/default-app behavior
 
-Important runtime behavior changes (routing, registration, tray/background behavior, rollback path) should always be reflected in this README.
+Install dependencies:
+
+```powershell
+bun install
+```
+
+Run the Tauri app:
+
+```powershell
+bun run tauri dev
+```
+
+Build the frontend:
+
+```powershell
+bun run build
+```
+
+Check the Rust app:
+
+```powershell
+cargo check --manifest-path src-tauri\Cargo.toml
+```
+
+`bun run tauri dev` runs under a terminal-owned dev process. Validate no-console-window behavior with a packaged build, not only dev mode.
+
+## FAQ
+
+### Is Hops a browser?
+
+No. Hops is a link router. It receives URLs from Windows, applies your rules, and opens another browser.
+
+### Why does Hops need to be selected in Windows Default Apps?
+
+Windows only forwards external `http` and `https` links to the current default handler. Hops must be selected there before it can route links from other apps.
+
+### Does Hops require admin rights?
+
+No. Hops registers itself under `HKCU`, the current-user registry hive.
+
+### Can I undo the Windows integration?
+
+Yes. Change `http` and `https` defaults away from Hops in Windows Default Apps, then click `Unregister Hops` in Hops Settings.
+
+### What happens if the target browser is closed?
+
+If `Use defaults when browser is not already running` is enabled, Hops uses your configured default browser. Otherwise, it opens the picker.
+
+### Where is the config stored?
+
+Hops stores its config at `%APPDATA%\Hops\config.json`.
+
+## Pattern Examples
+
+| Pattern type          | Pattern                                | Example match                             | Notes                                    |
+| --------------------- | -------------------------------------- | ----------------------------------------- | ---------------------------------------- |
+| Hostname              | `github.com`                           | `https://github.com/org/repo`             | Matches the exact hostname only.         |
+| Hostname + subdomains | `*.notion.so`                          | `https://workspace.notion.so/page`        | Matches subdomains, not the root domain. |
+| Prefix                | `https://linear.app/myteam`            | `https://linear.app/myteam/issue/ENG-1`   | Good for routing one URL branch.         |
+| Contains              | `figma`                                | `https://www.figma.com/file/123`          | Can match more than expected.            |
+| Full URL              | `https://app.example.com/a`            | `https://app.example.com/a`               | Exact full-string match only.            |
+| Glob                  | `https://jira.*/browse/ENG-*`          | `https://jira.example.com/browse/ENG-123` | Supports wildcard matching.              |
+| Regex                 | `^https?://(www\.)?youtube\.com/watch` | `https://youtube.com/watch?v=abc`         | Most flexible, easiest to misuse.        |
 
 ## License
 
