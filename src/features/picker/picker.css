@@ -64,11 +64,17 @@ body.picker-body {
   flex: 0 0 34px;
   place-items: center;
   border: 1px solid var(--picker-shadow);
-  background: var(--picker-accent);
+  background: #fdf6e3;
   color: #233038;
   box-shadow: 4px 4px 0 var(--picker-shadow);
   font-size: 17px;
   font-weight: 900;
+}
+
+.picker-brand-mark img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
 }
 
 .picker-brand-copy {

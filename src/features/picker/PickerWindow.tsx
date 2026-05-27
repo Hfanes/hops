@@ -154,7 +154,9 @@ function PickerWindow() {
     <main className="picker-shell">
       <section className={`picker-menu ${session?.disableTransparency ? "solid" : ""}`}>
         <div className="picker-brand-row">
-          <span className="picker-brand-mark">H</span>
+          <span className="picker-brand-mark">
+            <img src="/hops.webp" alt="" aria-hidden="true" />
+          </span>
           <div className="picker-brand-copy">
             <p>Hops Picker</p>
             <span>{session?.source === "manual" ? "Manual launch" : "Route decision"}</span>

@@ -27,8 +27,13 @@ export function SidebarNav({
   return (
     <aside className={className} aria-label="Primary">
       <div className="flex min-h-10 items-center gap-2.5 overflow-hidden px-1">
-        <span className="grid size-8 shrink-0 place-items-center border border-[#FDF6E3] bg-[var(--h-accent)] text-base font-black text-white shadow-[4px_4px_0_#032f33]">
-          H
+        <span className="grid size-8 shrink-0 place-items-center border border-[#FDF6E3] bg-[#FDF6E3] text-base font-black text-white shadow-[4px_4px_0_#032f33]">
+          <img
+            className="size-6 object-contain"
+            src="/hops.webp"
+            alt=""
+            aria-hidden="true"
+          />
         </span>
         <span
           className={`whitespace-nowrap text-[13px] font-black uppercase tracking-[0.12em] ${
