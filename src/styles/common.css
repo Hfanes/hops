@@ -136,6 +136,116 @@
   gap: 10px;
 }
 
+.browser-title {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.browser-title strong,
+.browser-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  object-fit: contain;
+}
+
+:root.dark .browser-icon {
+  padding: 3px;
+  border: 1px solid #d3dbdd;
+  background: #fdf6e3;
+}
+
+.default-browser-picker {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-select-control {
+  width: 100%;
+  min-height: 20px;
+  padding: 8px 10px;
+  border: 1px solid var(--h-border);
+  background: var(--h-card);
+  color: var(--h-text);
+  box-shadow: none;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.settings-select-control:hover:not(:disabled),
+.settings-select-control:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+.settings-select-control:focus,
+.settings-select-control:focus-visible {
+  outline: 2px solid var(--h-accent);
+  outline-offset: 0;
+  border-color: var(--h-accent);
+}
+
+.default-browser-trigger {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.default-browser-trigger span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-browser-options {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  max-height: 230px;
+  padding: 8px;
+  border: 1px solid var(--h-shadow);
+  background: var(--h-card);
+  box-shadow: 4px 4px 0 var(--h-shadow);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.default-browser-option {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 38px;
+  background: var(--h-card);
+  color: var(--h-text);
+  text-align: left;
+}
+
+.default-browser-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-browser-option.selected {
+  background: var(--h-secondary);
+  color: #233038;
+}
+
 .badges {
   display: flex;
   gap: 6px;

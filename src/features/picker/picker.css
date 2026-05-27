@@ -216,8 +216,17 @@ body.picker-body {
   text-overflow: ellipsis;
 }
 
-.picker-menu-item-name svg {
-  flex: 0 0 1em;
+.picker-browser-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  object-fit: contain;
+}
+
+:root.dark .picker-browser-icon {
+  padding: 3px;
+  border: 1px solid #d3dbdd;
+  background: #fdf6e3;
 }
 
 .picker-menu-item.is-running .picker-menu-item-name {

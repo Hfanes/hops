@@ -302,7 +302,7 @@ where
 {
     let normalized_url = normalize_http_url(url)?.to_string();
 
-    let browsers = config
+    let mut browsers: Vec<PickerBrowserEntry> = config
         .browsers
         .iter()
         .filter(|browser| !browser.is_hidden)
@@ -310,6 +310,7 @@ where
             id: browser.id.clone(),
             name: browser.name.clone(),
             private_flag: browser.private_flag.clone(),
+            icon_key: browser.icon_key.clone(),
             is_default: config
                 .default_browser_id
                 .as_ref()
@@ -317,6 +318,10 @@ where
             is_running: running.is_browser_running(browser),
         })
         .collect();
+    browsers.sort_by(|left, right| {
+        picker_browser_sort_key(left, preferred_browser_id)
+            .cmp(&picker_browser_sort_key(right, preferred_browser_id))
+    });
 
     Ok(PickerSession {
         url: normalized_url,
@@ -330,6 +335,23 @@ where
         alt_pressed: is_alt_pressed(),
         browsers,
     })
+}
+
+fn picker_browser_sort_key(
+    browser: &PickerBrowserEntry,
+    preferred_browser_id: Option<&str>,
+) -> (u8, String) {
+    let priority = if preferred_browser_id.is_some_and(|id| id == browser.id) {
+        0
+    } else if browser.is_default {
+        1
+    } else if browser.is_running {
+        2
+    } else {
+        3
+    };
+
+    (priority, browser.name.to_lowercase())
 }
 
 pub(crate) fn show_picker_window(
@@ -497,6 +519,7 @@ mod tests {
             name: name.to_string(),
             path: format!("C:\\Tools\\{name}\\browser.exe"),
             private_flag: Some("--incognito".to_string()),
+            icon_key: Some(id.to_string()),
             manual_trust: None,
             source: BrowserSource::Manual,
             is_hidden: false,
@@ -527,6 +550,17 @@ mod tests {
         });
 
         (snapshot, scan_count)
+    }
+
+    fn running_snapshot(
+        running_paths: HashSet<String>,
+    ) -> RunningProcessSnapshot<impl FnMut() -> HashSet<String>> {
+        RunningProcessSnapshot::new(move || {
+            running_paths
+                .iter()
+                .map(|path| path.trim().replace('/', "\\").to_lowercase())
+                .collect()
+        })
     }
 
     fn build_route_picker_session<F>(
@@ -580,6 +614,7 @@ mod tests {
 
         assert_eq!(session.browsers.len(), 1);
         assert!(!session.browsers[0].is_running);
+        assert_eq!(session.browsers[0].icon_key.as_deref(), Some("brave"));
         assert_eq!(scan_count.get(), 1);
     }
 
@@ -627,5 +662,128 @@ mod tests {
 
         assert_eq!(session.browsers.len(), 1);
         assert_eq!(scan_count.get(), 1);
+    }
+
+    #[test]
+    fn preferred_browser_sorts_before_default_and_running_browsers() {
+        let preferred = manual_browser("brave", "Brave");
+        let default = manual_browser("chrome", "Chrome");
+        let running_browser = manual_browser("firefox", "Firefox");
+        let mut config = test_app_config(vec![
+            default.clone(),
+            running_browser.clone(),
+            preferred.clone(),
+        ]);
+        config.default_browser_id = Some(default.id.clone());
+        let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
+
+        let session = build_picker_session_with_running_processes(
+            &config,
+            "https://example.com",
+            PickerLaunchSource::Route,
+            "test",
+            Some(preferred.id.as_str()),
+            false,
+            &mut running,
+        )
+        .expect("picker session should build");
+
+        let browser_ids: Vec<&str> = session
+            .browsers
+            .iter()
+            .map(|browser| browser.id.as_str())
+            .collect();
+        assert_eq!(browser_ids, vec!["brave", "chrome", "firefox"]);
+    }
+
+    #[test]
+    fn default_browser_sorts_before_running_when_no_preferred_browser_exists() {
+        let running_browser = manual_browser("brave", "Brave");
+        let default = manual_browser("chrome", "Chrome");
+        let other = manual_browser("firefox", "Firefox");
+        let mut config = test_app_config(vec![
+            other.clone(),
+            running_browser.clone(),
+            default.clone(),
+        ]);
+        config.default_browser_id = Some(default.id.clone());
+        let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
+
+        let session = build_picker_session_with_running_processes(
+            &config,
+            "https://example.com",
+            PickerLaunchSource::Manual,
+            "test",
+            None,
+            false,
+            &mut running,
+        )
+        .expect("picker session should build");
+
+        let browser_ids: Vec<&str> = session
+            .browsers
+            .iter()
+            .map(|browser| browser.id.as_str())
+            .collect();
+        assert_eq!(browser_ids, vec!["chrome", "brave", "firefox"]);
+    }
+
+    #[test]
+    fn running_browsers_sort_before_other_non_default_browsers() {
+        let other_a = manual_browser("arc", "Arc");
+        let running_browser = manual_browser("vivaldi", "Vivaldi");
+        let other_b = manual_browser("zen", "Zen");
+        let config = test_app_config(vec![
+            other_b.clone(),
+            other_a.clone(),
+            running_browser.clone(),
+        ]);
+        let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
+
+        let session = build_picker_session_with_running_processes(
+            &config,
+            "https://example.com",
+            PickerLaunchSource::Manual,
+            "test",
+            None,
+            false,
+            &mut running,
+        )
+        .expect("picker session should build");
+
+        let browser_ids: Vec<&str> = session
+            .browsers
+            .iter()
+            .map(|browser| browser.id.as_str())
+            .collect();
+        assert_eq!(browser_ids, vec!["vivaldi", "arc", "zen"]);
+    }
+
+    #[test]
+    fn picker_browser_order_falls_back_to_browser_name() {
+        let config = test_app_config(vec![
+            manual_browser("zen", "Zen"),
+            manual_browser("brave", "Brave"),
+            manual_browser("arc", "Arc"),
+        ]);
+        let mut running = running_snapshot(HashSet::new());
+
+        let session = build_picker_session_with_running_processes(
+            &config,
+            "https://example.com",
+            PickerLaunchSource::Manual,
+            "test",
+            None,
+            false,
+            &mut running,
+        )
+        .expect("picker session should build");
+
+        let browser_ids: Vec<&str> = session
+            .browsers
+            .iter()
+            .map(|browser| browser.id.as_str())
+            .collect();
+        assert_eq!(browser_ids, vec!["arc", "brave", "zen"]);
     }
 }

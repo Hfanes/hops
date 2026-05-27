@@ -34,6 +34,8 @@ pub(crate) struct BrowserConfig {
     pub(crate) path: String,
     pub(crate) private_flag: Option<String>,
     #[serde(default)]
+    pub(crate) icon_key: Option<String>,
+    #[serde(default)]
     pub(crate) manual_trust: Option<ManualBrowserTrust>,
     pub(crate) source: BrowserSource,
     pub(crate) is_hidden: bool,
@@ -129,6 +131,7 @@ pub(crate) struct ManualBrowserValidationResult {
     pub(crate) browser_name: String,
     pub(crate) private_flag: Option<String>,
     pub(crate) family: Option<String>,
+    pub(crate) icon_key: Option<String>,
     pub(crate) requires_confirmation: bool,
     pub(crate) message: String,
 }
@@ -157,6 +160,7 @@ pub(crate) struct PickerBrowserEntry {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) private_flag: Option<String>,
+    pub(crate) icon_key: Option<String>,
     pub(crate) is_default: bool,
     pub(crate) is_running: bool,
 }

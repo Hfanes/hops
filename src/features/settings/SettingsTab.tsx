@@ -1,5 +1,12 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
+import { BrowserIcon } from "../../components/common/BrowserIcon";
 import type {
   BrowserConfig,
   BrowserRegistrationStatus,
@@ -55,6 +62,47 @@ export function SettingsTab({
 }) {
   const [isRegistrationHelpVisible, setIsRegistrationHelpVisible] =
     useState(false);
+  const [isDefaultBrowserPickerOpen, setIsDefaultBrowserPickerOpen] =
+    useState(false);
+  const defaultBrowserPickerRef = useRef<HTMLLabelElement | null>(null);
+  const selectedDefaultBrowser =
+    visibleBrowsers.find(
+      (browser) => browser.id === settingsDraft?.defaultBrowserId,
+    ) ?? null;
+
+  function selectDefaultBrowser(browserId: string) {
+    onUpdateSettingsDraft((current) => ({
+      ...current,
+      defaultBrowserId: browserId,
+    }));
+    setIsDefaultBrowserPickerOpen(false);
+  }
+
+  useEffect(() => {
+    if (!isDefaultBrowserPickerOpen) {
+      return;
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      const picker = defaultBrowserPickerRef.current;
+      if (picker && !picker.contains(event.target as Node)) {
+        setIsDefaultBrowserPickerOpen(false);
+      }
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsDefaultBrowserPickerOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [isDefaultBrowserPickerOpen]);
 
   return (
     <section className="tab-body">
@@ -115,25 +163,64 @@ export function SettingsTab({
           If enabled, Hops falls back to your configured default browser.
         </p>
 
-        <label>
+        <label className="default-browser-picker" ref={defaultBrowserPickerRef}>
           Default browser
-          <select
-            value={settingsDraft?.defaultBrowserId ?? ""}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              onUpdateSettingsDraft((current) => ({
-                ...current,
-                defaultBrowserId: value,
-              }));
-            }}
+          <button
+            type="button"
+            className="settings-select-control default-browser-trigger"
+            aria-expanded={isDefaultBrowserPickerOpen}
+            onClick={() =>
+              setIsDefaultBrowserPickerOpen((current) => !current)
+            }
           >
-            <option value="">None</option>
-            {visibleBrowsers.map((browser) => (
-              <option key={browser.id} value={browser.id}>
-                {browser.name}
-              </option>
-            ))}
-          </select>
+            {selectedDefaultBrowser ? (
+              <>
+                <BrowserIcon iconKey={selectedDefaultBrowser.iconKey} />
+                <span>{selectedDefaultBrowser.name}</span>
+              </>
+            ) : (
+              <span>None</span>
+            )}
+            {isDefaultBrowserPickerOpen ? (
+              <FiChevronUp aria-hidden="true" />
+            ) : (
+              <FiChevronDown aria-hidden="true" />
+            )}
+          </button>
+          {isDefaultBrowserPickerOpen ? (
+            <div className="default-browser-options" role="listbox">
+              <button
+                type="button"
+                className={`default-browser-option ${
+                  settingsDraft?.defaultBrowserId ? "" : "selected"
+                }`}
+                role="option"
+                aria-selected={!settingsDraft?.defaultBrowserId}
+                onClick={() => selectDefaultBrowser("")}
+              >
+                None
+              </button>
+              {visibleBrowsers.map((browser) => {
+                const isSelected =
+                  settingsDraft?.defaultBrowserId === browser.id;
+                return (
+                  <button
+                    key={browser.id}
+                    type="button"
+                    className={`default-browser-option ${
+                      isSelected ? "selected" : ""
+                    }`}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => selectDefaultBrowser(browser.id)}
+                  >
+                    <BrowserIcon iconKey={browser.iconKey} />
+                    <span>{browser.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </label>
       </article>
 
@@ -143,6 +230,7 @@ export function SettingsTab({
         <label>
           Theme
           <select
+            className="settings-select-control"
             value={settingsDraft?.themePreference ?? theme}
             onChange={(event) => {
               onUpdateThemePreference(

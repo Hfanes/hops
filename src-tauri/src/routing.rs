@@ -282,6 +282,7 @@ mod tests {
             name: name.to_string(),
             path: format!("C:\\Tools\\{name}\\browser.exe"),
             private_flag: Some("--incognito".to_string()),
+            icon_key: Some("generic".to_string()),
             manual_trust: None,
             source: BrowserSource::Manual,
             is_hidden: false,

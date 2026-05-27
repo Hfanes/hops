@@ -1,3 +1,4 @@
+import { BrowserIcon } from "../../components/common/BrowserIcon";
 import type { BrowserConfig } from "../../types";
 
 export function BrowsersTab({
@@ -46,7 +47,10 @@ export function BrowsersTab({
             className={`card ${browser.isHidden ? "muted" : ""}`}
           >
             <div className="card-title">
-              <strong>{browser.name}</strong>
+              <span className="browser-title">
+                <BrowserIcon iconKey={browser.iconKey} />
+                <strong>{browser.name}</strong>
+              </span>
               <div className="badges">
                 <span className="badge">{browser.source}</span>
                 {browser.source === "manual" && browser.manualTrust ? (
