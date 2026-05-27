@@ -223,6 +223,12 @@ body.picker-body {
   object-fit: contain;
 }
 
+:root.dark .picker-browser-icon {
+  padding: 3px;
+  border: 1px solid #d3dbdd;
+  background: #fdf6e3;
+}
+
 .picker-menu-item.is-running .picker-menu-item-name {
   font-weight: 900;
 }

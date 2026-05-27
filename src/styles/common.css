@@ -158,6 +158,12 @@
   object-fit: contain;
 }
 
+:root.dark .browser-icon {
+  padding: 3px;
+  border: 1px solid #d3dbdd;
+  background: #fdf6e3;
+}
+
 .default-browser-picker {
   position: relative;
   display: grid;
