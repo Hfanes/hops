@@ -6,7 +6,7 @@
 }
 
 :root {
-  --bottom-status-height: 28px;
+  --bottom-status-height: 24px;
 }
 
 .topbar > div:first-child {

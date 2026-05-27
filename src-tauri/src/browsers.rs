@@ -1002,6 +1002,41 @@ pub(crate) fn is_browser_running(
     running_processes.contains(&normalized_path)
 }
 
+pub(crate) struct RunningProcessSnapshot<F>
+where
+    F: FnMut() -> HashSet<String>,
+{
+    running: Option<HashSet<String>>,
+    load: F,
+}
+
+impl RunningProcessSnapshot<fn() -> HashSet<String>> {
+    pub(crate) fn current() -> Self {
+        fn load_running_processes() -> HashSet<String> {
+            running_processes().unwrap_or_default()
+        }
+
+        Self::new(load_running_processes)
+    }
+}
+
+impl<F> RunningProcessSnapshot<F>
+where
+    F: FnMut() -> HashSet<String>,
+{
+    pub(crate) fn new(load: F) -> Self {
+        Self {
+            running: None,
+            load,
+        }
+    }
+
+    pub(crate) fn is_browser_running(&mut self, browser: &BrowserConfig) -> bool {
+        let running = self.running.get_or_insert_with(|| (self.load)());
+        is_browser_running(browser, running)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

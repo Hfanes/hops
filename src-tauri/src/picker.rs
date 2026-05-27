@@ -1,9 +1,12 @@
-use crate::browsers::{is_browser_running, running_processes};
+use crate::browsers::RunningProcessSnapshot;
 use crate::config::load_or_init_config;
 use crate::models::{
     AppConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction, RouteDecision,
 };
-use crate::routing::{normalize_http_url, open_url_with_browser, picker_decision, resolve_route};
+use crate::routing::{
+    normalize_http_url, open_url_with_browser, picker_decision,
+    resolve_route_with_running_processes,
+};
 use crate::{
     PICKER_CURSOR_OFFSET_X, PICKER_CURSOR_OFFSET_Y, PICKER_IDLE_DESTROY_SECONDS,
     PICKER_MENU_CHROME_HEIGHT, PICKER_MENU_MAX_HEIGHT, PICKER_MENU_MIN_HEIGHT,
@@ -273,8 +276,31 @@ fn build_picker_session(
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<PickerSession, String> {
+    let mut running = RunningProcessSnapshot::current();
+    build_picker_session_with_running_processes(
+        config,
+        url,
+        source,
+        reason,
+        preferred_browser_id,
+        preferred_private_mode,
+        &mut running,
+    )
+}
+
+fn build_picker_session_with_running_processes<F>(
+    config: &AppConfig,
+    url: &str,
+    source: PickerLaunchSource,
+    reason: &str,
+    preferred_browser_id: Option<&str>,
+    preferred_private_mode: bool,
+    running: &mut RunningProcessSnapshot<F>,
+) -> Result<PickerSession, String>
+where
+    F: FnMut() -> std::collections::HashSet<String>,
+{
     let normalized_url = normalize_http_url(url)?.to_string();
-    let running = running_processes().unwrap_or_default();
 
     let browsers = config
         .browsers
@@ -288,7 +314,7 @@ fn build_picker_session(
                 .default_browser_id
                 .as_ref()
                 .is_some_and(|default_id| default_id == &browser.id),
-            is_running: is_browser_running(browser, &running),
+            is_running: running.is_browser_running(browser),
         })
         .collect();
 
@@ -326,6 +352,42 @@ pub(crate) fn show_picker_window(
         preferred_browser_id,
         preferred_private_mode,
     )?;
+    show_picker_window_with_session(app, state, session)
+}
+
+fn show_picker_window_with_running_processes<F>(
+    app: &AppHandle,
+    state: &PickerState,
+    config: &AppConfig,
+    url: &str,
+    source: PickerLaunchSource,
+    reason: &str,
+    preferred_browser_id: Option<&str>,
+    preferred_private_mode: bool,
+    running: &mut RunningProcessSnapshot<F>,
+) -> Result<(), String>
+where
+    F: FnMut() -> std::collections::HashSet<String>,
+{
+    cancel_picker_idle_destroy(state)?;
+
+    let session = build_picker_session_with_running_processes(
+        config,
+        url,
+        source,
+        reason,
+        preferred_browser_id,
+        preferred_private_mode,
+        running,
+    )?;
+    show_picker_window_with_session(app, state, session)
+}
+
+fn show_picker_window_with_session(
+    app: &AppHandle,
+    state: &PickerState,
+    session: PickerSession,
+) -> Result<(), String> {
     store_picker_session(state, session.clone())?;
 
     let window = ensure_picker_window(app)?;
@@ -380,7 +442,8 @@ pub(crate) fn handle_incoming_url(
         return Ok(decision);
     }
 
-    let decision = resolve_route(&config, url)?;
+    let mut running = RunningProcessSnapshot::current();
+    let decision = resolve_route_with_running_processes(&config, url, &mut running)?;
 
     if decision.action == RouteAction::OpenBrowser {
         hide_picker_window_internal(app, state)?;
@@ -388,7 +451,7 @@ pub(crate) fn handle_incoming_url(
             open_url_with_browser(&config, browser_id, url, decision.private_mode)?;
         }
     } else {
-        show_picker_window(
+        show_picker_window_with_running_processes(
             app,
             state,
             &config,
@@ -397,8 +460,172 @@ pub(crate) fn handle_incoming_url(
             &decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
+            &mut running,
         )?;
     }
 
     Ok(decision)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{
+        BrowserConfig, BrowserSource, RuleConfig, RulePatternType, ThemePreference,
+    };
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    use std::rc::Rc;
+
+    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
+        AppConfig {
+            version: 1,
+            always_show_picker: false,
+            use_defaults_when_not_running: false,
+            disable_transparency: false,
+            theme_preference: ThemePreference::Light,
+            onboarding_completed: true,
+            default_browser_id: None,
+            browsers,
+            rules: Vec::new(),
+        }
+    }
+
+    fn manual_browser(id: &str, name: &str) -> BrowserConfig {
+        BrowserConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: format!("C:\\Tools\\{name}\\browser.exe"),
+            private_flag: Some("--incognito".to_string()),
+            manual_trust: None,
+            source: BrowserSource::Manual,
+            is_hidden: false,
+        }
+    }
+
+    fn test_rule(pattern_type: RulePatternType, pattern: &str, browser_id: &str) -> RuleConfig {
+        RuleConfig {
+            id: "test".to_string(),
+            pattern: pattern.to_string(),
+            pattern_type,
+            browser_id: browser_id.to_string(),
+            private_mode: false,
+            enabled: true,
+        }
+    }
+
+    fn counted_empty_snapshot() -> (
+        RunningProcessSnapshot<impl FnMut() -> HashSet<String>>,
+        Rc<Cell<usize>>,
+    ) {
+        let scan_count = Rc::new(Cell::new(0));
+        let scan_count_for_load = Rc::clone(&scan_count);
+
+        let snapshot = RunningProcessSnapshot::new(move || {
+            scan_count_for_load.set(scan_count_for_load.get() + 1);
+            HashSet::new()
+        });
+
+        (snapshot, scan_count)
+    }
+
+    fn build_route_picker_session<F>(
+        config: &AppConfig,
+        url: &str,
+        decision: &RouteDecision,
+        running: &mut RunningProcessSnapshot<F>,
+    ) -> PickerSession
+    where
+        F: FnMut() -> HashSet<String>,
+    {
+        build_picker_session_with_running_processes(
+            config,
+            url,
+            PickerLaunchSource::Route,
+            &decision.reason,
+            decision.browser_id.as_deref(),
+            decision.private_mode,
+            running,
+        )
+        .expect("picker session should build")
+    }
+
+    #[test]
+    fn matched_non_running_rule_reuses_route_snapshot_for_picker_badges() {
+        let browser = manual_browser("brave", "Brave");
+        let mut config = test_app_config(vec![browser.clone()]);
+        config.rules.push(test_rule(
+            RulePatternType::Hostname,
+            "github.com",
+            &browser.id,
+        ));
+        let (mut running, scan_count) = counted_empty_snapshot();
+
+        let decision = resolve_route_with_running_processes(
+            &config,
+            "https://github.com/openai/codex",
+            &mut running,
+        )
+        .expect("route should resolve");
+        assert_eq!(decision.action, RouteAction::ShowPicker);
+        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(scan_count.get(), 1);
+
+        let session = build_route_picker_session(
+            &config,
+            "https://github.com/openai/codex",
+            &decision,
+            &mut running,
+        );
+
+        assert_eq!(session.browsers.len(), 1);
+        assert!(!session.browsers[0].is_running);
+        assert_eq!(scan_count.get(), 1);
+    }
+
+    #[test]
+    fn always_show_picker_scans_only_when_picker_badges_are_built() {
+        let browser = manual_browser("chrome", "Chrome");
+        let mut config = test_app_config(vec![browser]);
+        config.always_show_picker = true;
+        let (mut running, scan_count) = counted_empty_snapshot();
+
+        let decision =
+            resolve_route_with_running_processes(&config, "https://example.com", &mut running)
+                .expect("route should resolve");
+
+        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(scan_count.get(), 0);
+
+        let session =
+            build_route_picker_session(&config, "https://example.com", &decision, &mut running);
+
+        assert_eq!(session.browsers.len(), 1);
+        assert_eq!(scan_count.get(), 1);
+    }
+
+    #[test]
+    fn no_match_scans_only_when_picker_badges_are_built() {
+        let browser = manual_browser("chrome", "Chrome");
+        let mut config = test_app_config(vec![browser.clone()]);
+        config.rules.push(test_rule(
+            RulePatternType::Hostname,
+            "github.com",
+            &browser.id,
+        ));
+        let (mut running, scan_count) = counted_empty_snapshot();
+
+        let decision =
+            resolve_route_with_running_processes(&config, "https://example.com", &mut running)
+                .expect("route should resolve");
+
+        assert_eq!(decision.reason, "no_match");
+        assert_eq!(scan_count.get(), 0);
+
+        let session =
+            build_route_picker_session(&config, "https://example.com", &decision, &mut running);
+
+        assert_eq!(session.browsers.len(), 1);
+        assert_eq!(scan_count.get(), 1);
+    }
 }
