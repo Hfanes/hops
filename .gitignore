@@ -16,6 +16,7 @@ node_modules/
 
 # frontend build output
 dist/
+site-dist/
 
 # .vscode workspace settings file
 .vscode/settings.json
