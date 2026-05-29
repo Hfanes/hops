@@ -13,7 +13,6 @@ const releaseUrl = "https://github.com/Hfanes/hops/releases/latest";
 const githubUrl = "https://github.com/Hfanes/hops";
 const authorUrl = "https://x.com/hfa_dev";
 const websiteUrl = "https://www.hfanes.com/";
-const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 
 type Feature = {
   title: string;
