@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "site:dev": "vite --config website/vite.config.ts",
-    "site:build": "vite build --config website/vite.config.ts",
+    "site:build": "tsc -p website/tsconfig.json && vite build --config website/vite.config.ts",
     "site:preview": "vite preview --config website/vite.config.ts",
     "tauri": "tauri"
   },

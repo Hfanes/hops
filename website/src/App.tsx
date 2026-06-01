@@ -2,23 +2,12 @@ import {
   FiArrowRight,
   FiDownload,
   FiGithub,
-  FiMousePointer,
-  FiRepeat,
-  FiShield,
-  FiSliders,
 } from "react-icons/fi";
-import type { IconType } from "react-icons";
 
 const releaseUrl = "https://github.com/Hfanes/hops/releases/latest";
 const githubUrl = "https://github.com/Hfanes/hops";
 const authorUrl = "https://x.com/hfa_dev";
 const websiteUrl = "https://www.hfanes.com/";
-
-type Feature = {
-  title: string;
-  description: string;
-  Icon: IconType;
-};
 
 type Screenshot = {
   title: string;
@@ -32,57 +21,30 @@ type Faq = {
   answer: string;
 };
 
-const features: Feature[] = [
-  {
-    title: "Rule-based routing",
-    description:
-      "Match links by hostname, prefix, glob, regex, or full URL and send them to the browser that fits the job.",
-    Icon: FiSliders,
-  },
-  {
-    title: "Fast browser picker",
-    description:
-      "When a rule needs a choice, Hops opens a focused picker near your cursor with running browsers prioritized.",
-    Icon: FiMousePointer,
-  },
-  {
-    title: "Reliable fallbacks",
-    description:
-      "Use your default browser when a target is closed, or force the picker when you want manual control.",
-    Icon: FiRepeat,
-  },
-  {
-    title: "User-scoped setup",
-    description:
-      "Registers under HKCU on Windows, so browser registration does not require machine-wide admin changes.",
-    Icon: FiShield,
-  },
-];
-
 const screenshots: Screenshot[] = [
   {
     title: "Browsers",
     description:
       "Review detected browsers, hide picker entries, and add manual browser paths.",
-    src: "browsers.webp",
+    src: "/browsers.webp",
   },
   {
     title: "Rules",
     description:
       "Create ordered rules that route matching URLs to specific browsers.",
-    src: "rules.webp",
+    src: "/rules.webp",
   },
   {
     title: "Settings",
     description:
       "Register Hops, manage defaults, configure startup, and choose routing behavior.",
-    src: "settings.webp",
+    src: "/settings.webp",
   },
   {
     title: "Picker",
     description:
       "Choose a browser only when automatic routing is not the right answer.",
-    src: "windowpicker.webp",
+    src: "/windowpicker.webp",
     fit: "contain",
   },
 ];
@@ -128,7 +90,7 @@ function Hero() {
       <div className="mx-auto flex w-[calc(100vw-2.5rem)] min-w-0 max-w-4xl flex-col items-center text-center">
         <div className="rounded-[1.7rem] bg-white/95 p-2.5 shadow-2xl shadow-black/25">
           <img
-            src={assetPath("hops.webp")}
+            src="/hops.webp"
             alt="Hops logo"
             className="h-20 w-20 rounded-[1.25rem]"
           />
@@ -197,7 +159,7 @@ function ScreenshotGallery() {
               className="overflow-hidden rounded-2xl border border-white/70 bg-white/90 shadow-xl shadow-[#075056]/10 backdrop-blur"
             >
               <img
-                src={assetPath(screenshot.src)}
+                src={screenshot.src}
                 alt={`Hops ${screenshot.title.toLowerCase()} screen`}
                 className={`aspect-[16/10] w-full ${
                   screenshot.fit === "contain"
