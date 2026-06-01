@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -44,7 +44,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build and publish Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -54,7 +54,6 @@ jobs:
           releaseBody: "Download the Windows installer from the assets below."
           releaseDraft: true
           prerelease: false
-          releaseAssetNamePattern: "hops[ext]"
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: false
+          assetNamePattern: "hops[ext]"
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
