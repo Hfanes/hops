@@ -6,6 +6,8 @@ import {
   FiRefreshCw,
 } from "react-icons/fi";
 import { RiTwitterXFill } from "react-icons/ri";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import type { MouseEvent } from "react";
 import type { AppAboutInfo, AppUpdateStatus } from "../../services/tauri";
 
 const creatorLinks = [
@@ -46,6 +48,19 @@ export function AboutPanel({
   onRefreshAbout: () => void;
   onUpdateApp: () => void;
 }) {
+  async function handleCreatorLink(
+    event: MouseEvent<HTMLAnchorElement>,
+    href: string,
+  ) {
+    event.preventDefault();
+
+    try {
+      await openUrl(href);
+    } catch (error) {
+      console.warn("Could not open creator link.", error);
+    }
+  }
+
   return (
     <section className="tab-body">
       <article className="card">
@@ -144,8 +159,8 @@ export function AboutPanel({
               key={label}
               className="about-link"
               href={href}
-              target="_blank"
               rel="noreferrer"
+              onClick={(event) => void handleCreatorLink(event, href)}
             >
               <Icon aria-hidden="true" />
               <span>{label}</span>

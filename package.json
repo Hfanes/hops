@@ -1,7 +1,7 @@
 {
   "name": "hops",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "@tauri-apps/api": "2.11.0",
     "@tauri-apps/plugin-autostart": "2.5.1",
+    "@tauri-apps/plugin-opener": "2.5.3",
     "@tauri-apps/plugin-process": "2.3.1",
     "@tauri-apps/plugin-updater": "2.10.1",
     "react": "19.2.6",
