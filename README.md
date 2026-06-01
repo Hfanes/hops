@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hfanes/hops">Website</a>
+  <a href="https://hops.hfanes.com/">Website</a>
   ·
   <a href="https://github.com/Hfanes/hops/releases/latest">Download</a>
   ·
