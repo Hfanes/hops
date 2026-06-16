@@ -354,6 +354,38 @@ fn picker_browser_sort_key(
     (priority, browser.name.to_lowercase())
 }
 
+fn load_config_with_picker_trigger_snapshot<F, L>(
+    mut is_picker_trigger_active: F,
+    mut load_config: L,
+) -> Result<(AppConfig, bool), String>
+where
+    F: FnMut() -> bool,
+    L: FnMut() -> Result<AppConfig, String>,
+{
+    let picker_trigger_active_before_config_load = is_picker_trigger_active();
+    let config = load_config()?;
+    let force_picker =
+        picker_trigger_active_before_config_load || is_picker_trigger_active();
+
+    Ok((config, force_picker))
+}
+
+fn resolve_incoming_url_decision_with_running_processes<F>(
+    config: &AppConfig,
+    url: &str,
+    force_picker: bool,
+    running: &mut RunningProcessSnapshot<F>,
+) -> Result<RouteDecision, String>
+where
+    F: FnMut() -> std::collections::HashSet<String>,
+{
+    if force_picker {
+        return Ok(picker_decision("ctrl_shift_click"));
+    }
+
+    resolve_route_with_running_processes(config, url, running)
+}
+
 pub(crate) fn show_picker_window(
     app: &AppHandle,
     state: &PickerState,
@@ -447,10 +479,19 @@ pub(crate) fn handle_incoming_url(
     state: &PickerState,
     url: &str,
 ) -> Result<RouteDecision, String> {
-    let config = load_or_init_config(app, false)?;
+    let (config, force_picker) = load_config_with_picker_trigger_snapshot(
+        is_ctrl_shift_picker_trigger_active,
+        || load_or_init_config(app, false),
+    )?;
+    let mut running = RunningProcessSnapshot::current();
+    let decision = resolve_incoming_url_decision_with_running_processes(
+        &config,
+        url,
+        force_picker,
+        &mut running,
+    )?;
 
-    if is_ctrl_shift_picker_trigger_active() {
-        let decision = picker_decision("ctrl_shift_click");
+    if decision.action == RouteAction::ShowPicker && decision.reason == "ctrl_shift_click" {
         show_picker_window(
             app,
             state,
@@ -463,9 +504,6 @@ pub(crate) fn handle_incoming_url(
         )?;
         return Ok(decision);
     }
-
-    let mut running = RunningProcessSnapshot::current();
-    let decision = resolve_route_with_running_processes(&config, url, &mut running)?;
 
     if decision.action == RouteAction::OpenBrowser {
         hide_picker_window_internal(app, state)?;
@@ -582,6 +620,74 @@ mod tests {
             running,
         )
         .expect("picker session should build")
+    }
+
+    #[test]
+    fn picker_trigger_is_checked_before_config_load() {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let trigger_events = Rc::clone(&events);
+        let load_events = Rc::clone(&events);
+
+        let (config, force_picker) = load_config_with_picker_trigger_snapshot(
+            || {
+                trigger_events.borrow_mut().push("trigger");
+                false
+            },
+            || {
+                load_events.borrow_mut().push("config");
+                Ok(test_app_config(vec![manual_browser("chrome", "Chrome")]))
+            },
+        )
+        .expect("config should load");
+
+        assert_eq!(config.browsers.len(), 1);
+        assert!(!force_picker);
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["trigger", "config", "trigger"]
+        );
+    }
+
+    #[test]
+    fn captured_picker_trigger_forces_picker_before_default_fallback() {
+        let default = manual_browser("chrome", "Chrome");
+        let mut config = test_app_config(vec![default.clone()]);
+        config.default_browser_id = Some(default.id);
+        config.use_defaults_when_not_running = true;
+        let (mut running, scan_count) = counted_empty_snapshot();
+
+        let decision = resolve_incoming_url_decision_with_running_processes(
+            &config,
+            "https://example.com",
+            true,
+            &mut running,
+        )
+        .expect("route should resolve");
+
+        assert_eq!(decision.action, RouteAction::ShowPicker);
+        assert_eq!(decision.reason, "ctrl_shift_click");
+        assert_eq!(scan_count.get(), 0);
+    }
+
+    #[test]
+    fn non_shortcut_keeps_default_fallback_behavior() {
+        let default = manual_browser("chrome", "Chrome");
+        let mut config = test_app_config(vec![default.clone()]);
+        config.default_browser_id = Some(default.id);
+        config.use_defaults_when_not_running = true;
+        let (mut running, scan_count) = counted_empty_snapshot();
+
+        let decision = resolve_incoming_url_decision_with_running_processes(
+            &config,
+            "https://example.com",
+            false,
+            &mut running,
+        )
+        .expect("route should resolve");
+
+        assert_eq!(decision.action, RouteAction::OpenBrowser);
+        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(scan_count.get(), 0);
     }
 
     #[test]
