@@ -12,7 +12,7 @@ mod tray;
 use config::load_or_init_config;
 use picker::{
     extract_url_from_args, handle_incoming_url, hide_picker_window_internal, hide_settings_window,
-    show_settings_window, PickerState,
+    install_picker_shortcut_observer, show_settings_window, PickerState,
 };
 use tray::setup_tray;
 
@@ -45,6 +45,7 @@ pub fn run() {
                 .app_name(HOPS_APP_NAME)
                 .build(),
         )
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -66,11 +67,13 @@ pub fn run() {
                 eprintln!("{error}");
             }
 
+            let state = app.state::<PickerState>();
+            install_picker_shortcut_observer(&state);
+
             let startup_url = extract_url_from_args(&initial_args);
 
             if let Some(url) = startup_url {
                 hide_settings_window(&app.handle());
-                let state = app.state::<PickerState>();
                 if let Err(error) = handle_incoming_url(&app.handle(), &state, &url) {
                     eprintln!("Hops could not process startup URL '{url}': {error}");
                 }

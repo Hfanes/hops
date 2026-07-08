@@ -5,6 +5,11 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import type {
@@ -171,6 +176,31 @@ export async function checkForAppUpdate(): Promise<AppUpdateStatus> {
     date: update?.date ?? null,
     body: update?.body ?? null,
   };
+}
+
+export async function notifyAppUpdateAvailable(
+  updateStatus: AppUpdateStatus,
+): Promise<void> {
+  if (!updateStatus.available) {
+    return;
+  }
+
+  let permissionGranted = await isPermissionGranted();
+
+  if (!permissionGranted) {
+    permissionGranted = (await requestPermission()) === "granted";
+  }
+
+  if (!permissionGranted) {
+    return;
+  }
+
+  sendNotification({
+    title: "Hops update available",
+    body: updateStatus.version
+      ? `Hops ${updateStatus.version} is ready to install.`
+      : "A new Hops version is ready to install.",
+  });
 }
 
 export async function installAvailableUpdate(): Promise<boolean> {
