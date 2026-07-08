@@ -10,6 +10,7 @@ import {
   installAvailableUpdate,
   listRunningBrowserIds,
   loadConfig,
+  notifyAppUpdateAvailable,
   openConfigFolder,
   openWindowsDefaultApps,
   previewRouteWithConfig,
@@ -181,6 +182,7 @@ function App() {
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const browserSaveTimersRef = useRef<Record<string, number>>({});
   const settingsSaveTimerRef = useRef<number | null>(null);
+  const notifiedUpdateVersionsRef = useRef<Set<string>>(new Set());
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
   const isRunningStateRefreshInFlightRef = useRef(false);
   const lastRunningStateRefreshAtRef = useRef(0);
@@ -1690,7 +1692,21 @@ function App() {
   async function refreshStatusBarUpdate() {
     setIsCheckingUpdate(true);
     try {
-      setUpdateStatus(await checkForAppUpdate());
+      const nextUpdateStatus = await checkForAppUpdate();
+      setUpdateStatus(nextUpdateStatus);
+
+      const updateVersionKey = nextUpdateStatus.version ?? "unknown";
+      if (
+        nextUpdateStatus.available &&
+        !notifiedUpdateVersionsRef.current.has(updateVersionKey)
+      ) {
+        notifiedUpdateVersionsRef.current.add(updateVersionKey);
+        try {
+          await notifyAppUpdateAvailable(nextUpdateStatus);
+        } catch (error) {
+          console.warn("Could not show update notification.", error);
+        }
+      }
     } catch (error) {
       console.warn("Could not check for updates.", error);
     } finally {
