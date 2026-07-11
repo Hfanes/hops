@@ -5,13 +5,132 @@
   flex-wrap: wrap;
 }
 
+.loading-state {
+  min-height: 100vh;
+  padding: 18px;
+  background: var(--h-bg);
+}
+
+.sidebar-brand {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  padding-inline: 4px;
+}
+
+.sidebar-brand-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #fdf6e3;
+  background: #fdf6e3;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 900;
+  box-shadow: 4px 4px 0 #032f33;
+}
+
+.sidebar-brand-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.sidebar-brand-name {
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sidebar-nav-list,
+.sidebar-footer-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-footer-actions {
+  margin-top: auto;
+}
+
 :root {
   --bottom-status-height: 24px;
+}
+
+.app-shell,
+.app-panel,
+.onboarding-panel,
+.content-area {
+  min-height: 100vh;
+  background: var(--h-bg);
+}
+
+.app-shell {
+  padding: 0;
+}
+
+.app-panel,
+.onboarding-panel {
+  display: grid;
+}
+
+.app-panel {
+  grid-template-columns: 168px minmax(0, 1fr);
+}
+
+.app-panel.sidebar-collapsed {
+  grid-template-columns: 54px minmax(0, 1fr);
+}
+
+.onboarding-panel {
+  grid-template-columns: 1fr;
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  height: calc(100vh - var(--bottom-status-height));
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  padding: 10px;
+  border-right: 1px solid var(--h-border);
+  background: #075056;
+  color: #fdf6e3;
+}
+
+.content-area {
+  min-width: 0;
+  padding: 16px;
+}
+
+@media (min-width: 768px) {
+  .content-area {
+    padding: 24px;
+  }
 }
 
 .topbar > div:first-child {
   min-width: 220px;
   flex: 1 1 auto;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--h-border);
 }
 
 .content-area {

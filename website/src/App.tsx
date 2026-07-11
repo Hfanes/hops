@@ -74,7 +74,7 @@ const faqs: Faq[] = [
 
 function App() {
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[linear-gradient(135deg,#075056_0%,#0b6970_45%,#5f8f63_100%)] text-[#122124]">
+    <main className="site-shell">
       <Hero />
       <ScreenshotGallery />
       <InstallSteps />
@@ -86,43 +86,43 @@ function App() {
 
 function Hero() {
   return (
-    <section className="overflow-hidden px-5 py-16 text-white sm:px-8 sm:py-20 lg:px-10 lg:py-24">
-      <div className="mx-auto flex w-[calc(100vw-2.5rem)] min-w-0 max-w-4xl flex-col items-center text-center">
-        <div className="rounded-[1.7rem] bg-white/95 p-2.5 shadow-2xl shadow-black/25">
+    <section className="hero site-section">
+      <div className="hero-inner">
+        <div className="hero-logo-card">
           <img
             src="/hops.webp"
             alt="Hops logo"
-            className="h-20 w-20 rounded-[1.25rem]"
+            className="hero-logo"
           />
         </div>
 
-        <h1 className="mt-9 text-5xl font-semibold leading-none tracking-tight text-white sm:text-6xl lg:text-7xl">
+        <h1 className="hero-title">
           Hops
         </h1>
-        <p className="mt-6 w-[calc(100vw-2.5rem)] max-w-[18rem] text-xl font-semibold leading-8 text-[#e9eef7] sm:max-w-2xl sm:text-2xl">
+        <p className="hero-tagline">
           Choose which browser opens every link.
         </p>
-        <p className="mt-4 w-[calc(100vw-2.5rem)] max-w-[18rem] text-base leading-8 text-[#aebbd1] sm:max-w-2xl sm:text-lg">
+        <p className="hero-description">
           A free Windows tray app that routes external links to the right
           browser based on rules you set up.
         </p>
-        <div className="mt-10 flex w-[calc(100vw-2.5rem)] max-w-[18rem] flex-col gap-3 sm:max-w-md sm:flex-row sm:justify-center">
+        <div className="hero-actions">
           <a
             href={releaseUrl}
-            className="inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-[#075056] shadow-lg shadow-[#10292d]/15 transition hover:bg-[#eef5f1] focus:outline-none focus:ring-2 focus:ring-[#c9ddd4] focus:ring-offset-2 focus:ring-offset-[#075056]"
+            className="hero-button primary"
           >
             <FiDownload aria-hidden="true" />
             Download
           </a>
           <a
             href={githubUrl}
-            className="inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#ff6a00] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#10292d]/15 transition hover:bg-[#f05f00] focus:outline-none focus:ring-2 focus:ring-[#ffd3ad] focus:ring-offset-2 focus:ring-offset-[#075056]"
+            className="hero-button accent"
           >
             <FiGithub aria-hidden="true" />
             View on GitHub
           </a>
         </div>
-        <p className="mt-6 text-sm text-[#8fa0ba]">
+        <p className="hero-meta">
           Free and open source · Windows
         </p>
       </div>
@@ -132,47 +132,47 @@ function Hero() {
 
 function ScreenshotGallery() {
   return (
-    <section className="px-5 py-20 sm:px-8 lg:px-10">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d8f2e6]">
+    <section className="site-section">
+      <div className="site-container">
+        <div className="section-heading-row">
+          <div className="section-copy">
+            <p className="eyebrow">
               Screenshots
             </p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            <h2 className="section-title">
               A small app for a specific job.
             </h2>
           </div>
           <a
             href={githubUrl}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-white hover:text-[#d8f2e6]"
+            className="text-link"
           >
             Browse the source
             <FiArrowRight aria-hidden="true" />
           </a>
         </div>
 
-        <div className="mt-10 grid gap-6 lg:grid-cols-2">
+        <div className="screenshot-grid">
           {screenshots.map((screenshot) => (
             <article
               key={screenshot.title}
-              className="overflow-hidden rounded-2xl border border-white/70 bg-white/90 shadow-xl shadow-[#075056]/10 backdrop-blur"
+              className="screenshot-card"
             >
               <img
                 src={screenshot.src}
                 alt={`Hops ${screenshot.title.toLowerCase()} screen`}
-                className={`aspect-[16/10] w-full ${
+                className={`screenshot-image ${
                   screenshot.fit === "contain"
-                    ? "bg-[#f7faf8] object-contain object-center p-4"
-                    : "object-cover object-top"
+                    ? "contain"
+                    : "cover"
                 }`}
                 loading="lazy"
               />
-              <div className="p-5">
-                <h3 className="text-lg font-semibold text-[#10292d]">
+              <div className="card-copy">
+                <h3 className="card-title">
                   {screenshot.title}
                 </h3>
-                <p className="mt-2 text-sm leading-6 text-[#53686b]">
+                <p className="card-description">
                   {screenshot.description}
                 </p>
               </div>
@@ -192,26 +192,26 @@ function InstallSteps() {
   ];
 
   return (
-    <section className="px-5 py-20 sm:px-8 lg:px-10">
-      <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.8fr_1.2fr]">
+    <section className="site-section">
+      <div className="site-container install-grid">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d8f2e6]">
+          <p className="eyebrow">
             Setup
           </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          <h2 className="section-title">
             Install once, then let Windows send links through Hops.
           </h2>
         </div>
-        <div className="grid gap-4">
+        <div className="step-list">
           {steps.map((step, index) => (
             <div
               key={step}
-              className="flex gap-4 rounded-2xl border border-white/70 bg-white/85 p-5 shadow-xl shadow-[#075056]/10 backdrop-blur"
+              className="step-card"
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#10292d] text-sm font-semibold text-white">
+              <div className="step-number">
                 {index + 1}
               </div>
-              <p className="pt-1 text-base leading-7 text-[#3d5356]">{step}</p>
+              <p className="step-text">{step}</p>
             </div>
           ))}
         </div>
@@ -222,26 +222,26 @@ function InstallSteps() {
 
 function FaqSection() {
   return (
-    <section className="px-5 py-20 sm:px-8 lg:px-10">
-      <div className="mx-auto max-w-7xl">
-        <div className="max-w-3xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d8f2e6]">
+    <section className="site-section">
+      <div className="site-container">
+        <div className="section-copy">
+          <p className="eyebrow">
             FAQ
           </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          <h2 className="section-title">
             Practical details before you install.
           </h2>
         </div>
-        <div className="mt-10 grid gap-4 md:grid-cols-2">
+        <div className="faq-grid">
           {faqs.map((faq) => (
             <article
               key={faq.question}
-              className="rounded-2xl border border-white/70 bg-white/85 p-5 shadow-sm backdrop-blur"
+              className="faq-card"
             >
-              <h3 className="text-base font-semibold text-[#10292d]">
+              <h3 className="faq-title">
                 {faq.question}
               </h3>
-              <p className="mt-3 text-sm leading-6 text-[#53686b]">
+              <p className="faq-answer">
                 {faq.answer}
               </p>
             </article>
@@ -254,33 +254,33 @@ function FaqSection() {
 
 function LinksSection() {
   return (
-    <footer className="px-5 pb-12 sm:px-8 lg:px-10">
-      <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 rounded-[2rem] border border-white/20 bg-white/10 p-6 text-center text-white shadow-xl shadow-[#075056]/10 backdrop-blur sm:flex-row sm:text-left">
-        <p className="text-sm text-[#d8f2e6]">
+    <footer className="site-footer">
+      <div className="site-container footer-card">
+        <p className="footer-credit">
           Made by{" "}
           <a
             href={authorUrl}
-            className="font-semibold text-white transition hover:text-[#ffd3ad]"
+            className="footer-author"
           >
             @hfa
           </a>
         </p>
-        <nav className="flex flex-wrap items-center justify-center gap-3 text-sm font-semibold">
+        <nav className="footer-links">
           <a
             href={websiteUrl}
-            className="rounded-full border border-white/20 px-4 py-2 text-white transition hover:bg-white/10"
+            className="footer-link"
           >
             Website
           </a>
           <a
             href={authorUrl}
-            className="rounded-full border border-white/20 px-4 py-2 text-white transition hover:bg-white/10"
+            className="footer-link"
           >
             X / Twitter
           </a>
           <a
             href={githubUrl}
-            className="rounded-full bg-[#ff6a00] px-4 py-2 text-white transition hover:bg-[#f05f00]"
+            className="footer-link accent"
           >
             GitHub
           </a>
