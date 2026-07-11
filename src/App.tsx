@@ -183,6 +183,7 @@ function App() {
   const browserSaveTimersRef = useRef<Record<string, number>>({});
   const settingsSaveTimerRef = useRef<number | null>(null);
   const notifiedUpdateVersionsRef = useRef<Set<string>>(new Set());
+  const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
   const isRunningStateRefreshInFlightRef = useRef(false);
   const lastRunningStateRefreshAtRef = useRef(0);
@@ -210,16 +211,14 @@ function App() {
         applyLoadedConfig(loaded);
         setStatus({ kind: "success", text: "Configuration loaded." });
 
-        const [runningIds, loadedConfigPath, nextAboutInfo] = await Promise.all(
-          [listRunningBrowserIds(), getConfigFilePath(), getAppAboutInfo()],
-        );
-        setRunningBrowserIds(new Set(runningIds));
+        const [loadedConfigPath, nextAboutInfo] = await Promise.all([
+          getConfigFilePath(),
+          getAppAboutInfo(),
+          refreshRegistrationStatus(),
+          refreshStartWithWindowsStatus(),
+        ]);
         setConfigPath(loadedConfigPath);
         setAboutInfo(nextAboutInfo);
-        await refreshRegistrationStatus();
-        await refreshStartWithWindowsStatus();
-
-        void refreshStatusBarUpdate();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setStatus({ kind: "error", text: `Failed to load config: ${message}` });
@@ -289,6 +288,24 @@ function App() {
   }, [activeTab]);
 
   useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const idleId = window.requestIdleCallback(
+      () => void refreshStatusBarUpdate(),
+      { timeout: 5000 },
+    );
+    return () => window.cancelIdleCallback(idleId);
+  }, [isLoading]);
+
+  useEffect(() => {
+    if (activeTab !== "browsers" || isLoading) {
+      return;
+    }
+
+    void refreshRunningState({ force: true });
+
     let disposed = false;
     let unlistenFocus: (() => void) | null = null;
 
@@ -317,6 +334,32 @@ function App() {
     return () => {
       disposed = true;
       unlistenFocus?.();
+    };
+  }, [activeTab, isLoading]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenClose: (() => void) | null = null;
+
+    void getCurrentWindow()
+      .onCloseRequested((event) => {
+        event.preventDefault();
+        void closeSettingsWindow();
+      })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlistenClose = unlisten;
+      })
+      .catch((error) => {
+        console.warn("Could not listen for Hops close requests.", error);
+      });
+
+    return () => {
+      disposed = true;
+      unlistenClose?.();
     };
   }, []);
 
@@ -822,6 +865,48 @@ function App() {
         });
       }
     })();
+  }
+
+  async function closeSettingsWindow() {
+    if (isClosingRef.current) {
+      return;
+    }
+
+    isClosingRef.current = true;
+    const hasPendingSettingsSave = settingsSaveTimerRef.current !== null;
+    const hasPendingBrowserSaves =
+      Object.keys(browserSaveTimersRef.current).length > 0;
+
+    if (settingsSaveTimerRef.current !== null) {
+      window.clearTimeout(settingsSaveTimerRef.current);
+      settingsSaveTimerRef.current = null;
+    }
+
+    for (const timerId of Object.values(browserSaveTimersRef.current)) {
+      window.clearTimeout(timerId);
+    }
+    browserSaveTimersRef.current = {};
+
+    try {
+      const latestConfig = configRef.current;
+      if (
+        latestConfig &&
+        (hasPendingSettingsSave || hasPendingBrowserSaves)
+      ) {
+        await persistConfig(latestConfig, {
+          errorPrefix: "Could not save changes before closing",
+          applySavedConfig: false,
+        });
+      }
+
+      await saveQueueRef.current;
+      await getCurrentWindow().destroy();
+    } catch {
+      isClosingRef.current = false;
+      if (configRef.current) {
+        scheduleSettingsSave(configRef.current);
+      }
+    }
   }
 
   async function refreshRegistrationStatus() {
@@ -1739,19 +1824,14 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
   }
 
-  const shellClassName = "min-h-screen bg-[var(--h-bg)] p-0";
-  const panelClassName = `grid min-h-screen bg-[var(--h-bg)] ${
-    isSidebarCollapsed
-      ? "grid-cols-[54px_minmax(0,1fr)]"
-      : "grid-cols-[168px_minmax(0,1fr)]"
+  const shellClassName = "app-shell";
+  const panelClassName = `app-panel ${
+    isSidebarCollapsed ? "sidebar-collapsed" : ""
   }`;
-  const onboardingPanelClassName =
-    "grid min-h-screen grid-cols-1 bg-[var(--h-bg)]";
-  const sidebarClassName =
-    "sticky top-0 flex h-[calc(100vh-var(--bottom-status-height))] min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--h-border)] bg-[#075056] p-2.5 text-[#FDF6E3]";
-  const contentClassName = "content-area min-h-screen min-w-0 p-4 md:p-6";
-  const topbarClassName =
-    "topbar mb-3.5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--h-border)] pb-3.5";
+  const onboardingPanelClassName = "onboarding-panel";
+  const sidebarClassName = "app-sidebar";
+  const contentClassName = "content-area";
+  const topbarClassName = "topbar";
 
   const sidebarNav = (
     <SidebarNav

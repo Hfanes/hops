@@ -26,24 +26,24 @@ export function SidebarNav({
 }) {
   return (
     <aside className={className} aria-label="Primary">
-      <div className="flex min-h-10 items-center gap-2.5 overflow-hidden px-1">
-        <span className="grid size-8 shrink-0 place-items-center border border-[#FDF6E3] bg-[#FDF6E3] text-base font-black text-white shadow-[4px_4px_0_#032f33]">
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-mark">
           <img
-            className="size-6 object-contain"
+            className="sidebar-brand-logo"
             src="/hops.webp"
             alt=""
             aria-hidden="true"
           />
         </span>
         <span
-          className={`whitespace-nowrap text-[13px] font-black uppercase tracking-[0.12em] ${
+          className={`sidebar-brand-name ${
             isCollapsed ? "sr-only" : ""
           }`}
         >
           Hops
         </span>
       </div>
-      <nav className="grid gap-2">
+      <nav className="sidebar-nav-list">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
@@ -64,7 +64,7 @@ export function SidebarNav({
           );
         })}
       </nav>
-      <div className="mt-auto grid gap-2">
+      <div className="sidebar-footer-actions">
         <button
           type="button"
           className={`sidebar-toggle secondary ${isCollapsed ? "icon-only" : ""}`}

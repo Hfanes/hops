@@ -17,8 +17,6 @@ import type {
   BrowserRegistrationStatus,
   ManualBrowserValidationRequest,
   ManualBrowserValidationResult,
-  OpenUrlRequest,
-  PickerSession,
   RouteDecision,
 } from "../types";
 
@@ -96,14 +94,6 @@ export function routeAndOpenWithConfig(
   return invoke<RouteDecision>("route_and_open_with_config", { config, url });
 }
 
-export function openUrl(request: OpenUrlRequest): Promise<void> {
-  return invoke<void>("open_url", { request });
-}
-
-export function getPickerState(): Promise<PickerSession | null> {
-  return invoke<PickerSession | null>("get_picker_state");
-}
-
 export function showPickerForUrl(
   url: string,
   preferredBrowserId: string | null = null,
@@ -114,10 +104,6 @@ export function showPickerForUrl(
     preferredBrowserId,
     preferredPrivateMode,
   });
-}
-
-export function hidePickerWindow(): Promise<void> {
-  return invoke<void>("hide_picker_window");
 }
 
 export function showSettingsWindow(): Promise<void> {
@@ -186,21 +172,18 @@ export async function notifyAppUpdateAvailable(
   }
 
   let permissionGranted = await isPermissionGranted();
-
   if (!permissionGranted) {
     permissionGranted = (await requestPermission()) === "granted";
   }
 
-  if (!permissionGranted) {
-    return;
+  if (permissionGranted) {
+    sendNotification({
+      title: "Hops update available",
+      body: updateStatus.version
+        ? `Hops ${updateStatus.version} is ready to install.`
+        : "A new Hops version is ready to install.",
+    });
   }
-
-  sendNotification({
-    title: "Hops update available",
-    body: updateStatus.version
-      ? `Hops ${updateStatus.version} is ready to install.`
-      : "A new Hops version is ready to install.",
-  });
 }
 
 export async function installAvailableUpdate(): Promise<boolean> {

@@ -364,6 +364,26 @@ pub(crate) fn show_settings_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "main")
+    else {
+        eprintln!("Hops settings: main window configuration was not found.");
+        return;
+    };
+
+    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        Err(error) => eprintln!("Hops settings: could not create settings window: {error}"),
     }
 }
 
@@ -470,7 +490,7 @@ fn ensure_picker_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String>
     let window = WebviewWindowBuilder::new(
         app,
         PICKER_WINDOW_LABEL,
-        WebviewUrl::App("index.html".into()),
+        WebviewUrl::App("picker.html".into()),
     )
     .title("Hops Picker")
     .inner_size(PICKER_MENU_WIDTH as f64, PICKER_MENU_MIN_HEIGHT as f64)

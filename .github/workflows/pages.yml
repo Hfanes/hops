@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "website/**"
-      - "public/**"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/pages.yml"

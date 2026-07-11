@@ -93,10 +93,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match (window.label(), event) {
-            ("main", WindowEvent::CloseRequested { api, .. }) => {
-                api.prevent_close();
-                let _ = window.hide();
-            }
             (PICKER_WINDOW_LABEL, WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
                 let app = window.app_handle();

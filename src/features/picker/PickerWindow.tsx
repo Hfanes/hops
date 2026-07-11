@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiLock } from "react-icons/fi";
-import { getPickerState, hidePickerWindow, openUrl } from "../../services/tauri";
+import { getPickerState, hidePickerWindow, openUrl } from "../../services/picker";
 import type { PickerSession, ThemePreference } from "../../types";
 import { PickerBrowserList } from "./PickerBrowserList";
 import "./picker.css";
