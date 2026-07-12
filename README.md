@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/hops.webp" alt="Hops logo" width="96" height="96" />
+  <img src="app-public/hops.webp" alt="Hops logo" width="96" height="96" />
 </p>
 
 <h1 align="center">Hops</h1>
@@ -46,19 +46,19 @@ This is a personal project, use it at your own risk. If Hops helps you, remember
 
 ### Browsers
 
-![Browsers](public/browsers.webp)
+![Browsers](website/public/browsers.webp)
 
 ### Rules
 
-![Rules](public/rules.webp)
+![Rules](website/public/rules.webp)
 
 ### Settings
 
-![Settings](public/settings.webp)
+![Settings](website/public/settings.webp)
 
 ### Window Picker
 
-![Window picker](public/windowpicker.webp)
+![Window picker](website/public/windowpicker.webp)
 
 ## Features
 
