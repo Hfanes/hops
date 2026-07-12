@@ -12,7 +12,8 @@ mod tray;
 use config::load_or_init_config;
 use picker::{
     extract_url_from_args, handle_incoming_url, hide_picker_window_internal, hide_settings_window,
-    install_picker_shortcut_observer, show_settings_window, PickerState,
+    install_picker_shortcut_observer, is_ctrl_shift_picker_trigger_currently_active,
+    show_settings_window, PickerState,
 };
 use tray::setup_tray;
 
@@ -37,8 +38,21 @@ const PICKER_IDLE_DESTROY_SECONDS: u64 = 15;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let initial_args: Vec<String> = std::env::args().collect();
+    let initial_picker_trigger = is_ctrl_shift_picker_trigger_currently_active();
 
     tauri::Builder::default()
+        // Keep single-instance first so secondary URL launches can forward and exit
+        // before initializing plugins that only the resident process needs.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(url) = extract_url_from_args(&args) {
+                let state = app.state::<PickerState>();
+                if let Err(error) = handle_incoming_url(&app, &state, &url, false) {
+                    eprintln!("Hops could not handle incoming URL '{url}': {error}");
+                }
+            } else {
+                show_settings_window(&app);
+            }
+        }))
         .manage(PickerState::default())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -48,16 +62,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(url) = extract_url_from_args(&args) {
-                let state = app.state::<PickerState>();
-                if let Err(error) = handle_incoming_url(&app, &state, &url) {
-                    eprintln!("Hops could not handle incoming URL '{url}': {error}");
-                }
-            } else {
-                show_settings_window(&app);
-            }
-        }))
         .setup(move |app| {
             #[cfg(desktop)]
             app.handle()
@@ -74,7 +78,9 @@ pub fn run() {
 
             if let Some(url) = startup_url {
                 hide_settings_window(&app.handle());
-                if let Err(error) = handle_incoming_url(&app.handle(), &state, &url) {
+                if let Err(error) =
+                    handle_incoming_url(&app.handle(), &state, &url, initial_picker_trigger)
+                {
                     eprintln!("Hops could not process startup URL '{url}': {error}");
                 }
             } else {
