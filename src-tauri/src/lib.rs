@@ -17,6 +17,10 @@ use picker::{
 };
 use tray::setup_tray;
 
+fn should_keep_tray_app_resident(exit_code: Option<i32>) -> bool {
+    exit_code.is_none()
+}
+
 const CONFIG_FILENAME: &str = "config.json";
 const HOPS_APP_NAME: &str = "Hops";
 const HOPS_PROTOCOL_PROG_ID: &str = "HopsURL";
@@ -40,7 +44,7 @@ pub fn run() {
     let initial_args: Vec<String> = std::env::args().collect();
     let initial_picker_trigger = is_ctrl_shift_picker_trigger_currently_active();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // Keep single-instance first so secondary URL launches can forward and exit
         // before initializing plugins that only the resident process needs.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -135,6 +139,35 @@ pub fn run() {
             commands::unregister_hops_as_browser,
             commands::reset_config
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|_app, event| {
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+            // Destroying the last webview must not stop this tray-first app.
+            // Explicit exits, such as tray Quit, include an exit code and remain allowed.
+            if should_keep_tray_app_resident(code) {
+                api.prevent_exit();
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_keep_tray_app_resident;
+
+    #[test]
+    fn keeps_running_when_the_last_window_is_destroyed() {
+        assert!(should_keep_tray_app_resident(None));
+    }
+
+    #[test]
+    fn allows_explicit_exit_requests() {
+        assert!(!should_keep_tray_app_resident(Some(0)));
+        assert!(!should_keep_tray_app_resident(Some(1)));
+        assert!(!should_keep_tray_app_resident(Some(
+            tauri::RESTART_EXIT_CODE
+        )));
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "hops"
-version = "0.1.4"
+version = "0.1.5"
 description = "Hops is a lightweight Windows tray app that routes external links to the right browser based on your rules. Hops is not a web browser."
 authors = ["hfa"]
 license = "MIT"
