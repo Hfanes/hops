@@ -3,7 +3,6 @@ use crate::models::{
     ManualBrowserValidationRequest, ManualBrowserValidationResult,
 };
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "windows"))]
 use std::process::{Command, Stdio};
@@ -125,6 +124,19 @@ pub(crate) fn merge_detected_browsers(
     config: &mut AppConfig,
     detected_browsers: Vec<BrowserConfig>,
 ) {
+    // Match existing detected entries by path so their IDs (which rules and the
+    // default browser reference) survive refreshes even if ID generation changes.
+    let existing_detected_by_path: HashMap<String, (String, bool)> = config
+        .browsers
+        .iter()
+        .filter(|browser| browser.source == BrowserSource::Detected)
+        .map(|browser| {
+            (
+                normalize_path(&browser.path),
+                (browser.id.clone(), browser.is_hidden),
+            )
+        })
+        .collect();
     let hidden_by_detected_id: HashMap<String, bool> = config
         .browsers
         .iter()
@@ -147,14 +159,20 @@ pub(crate) fn merge_detected_browsers(
     let mut merged = manual_browsers;
 
     for mut browser in detected_browsers {
-        if manual_paths.contains(&normalize_path(&browser.path)) {
+        let normalized = normalize_path(&browser.path);
+        if manual_paths.contains(&normalized) {
             continue;
         }
 
-        browser.is_hidden = hidden_by_detected_id
-            .get(&browser.id)
-            .copied()
-            .unwrap_or(false);
+        if let Some((existing_id, is_hidden)) = existing_detected_by_path.get(&normalized) {
+            browser.id = existing_id.clone();
+            browser.is_hidden = *is_hidden;
+        } else {
+            browser.is_hidden = hidden_by_detected_id
+                .get(&browser.id)
+                .copied()
+                .unwrap_or(false);
+        }
         merged.push(browser);
     }
 
@@ -921,10 +939,21 @@ fn known_install_paths(definition: &KnownBrowserDefinition) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Builds an ID from a 64-bit FNV-1a hash of the lowercased key.
+///
+/// FNV-1a is fixed by specification, unlike `DefaultHasher`, whose output may
+/// change between Rust releases and would silently orphan persisted rules.
 fn stable_id(prefix: &str, key: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    key.to_lowercase().hash(&mut hasher);
-    format!("{prefix}-{:016x}", hasher.finish())
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let hash = key
+        .to_lowercase()
+        .bytes()
+        .fold(FNV_OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+        });
+    format!("{prefix}-{hash:016x}")
 }
 
 fn normalize_path(path: &str) -> String {
@@ -1277,6 +1306,39 @@ mod tests {
             config.browsers[0].private_flag.as_deref(),
             Some("--my-private")
         );
+    }
+
+    #[test]
+    fn stable_id_is_fixed_fnv1a_and_case_insensitive() {
+        // Pinned values: these must never change, or persisted rules lose their browser.
+        assert_eq!(stable_id("detected", ""), "detected-cbf29ce484222325");
+        assert_eq!(stable_id("detected", "a"), "detected-af63dc4c8601ec8c");
+        assert_eq!(
+            stable_id("detected", "C:\\Chrome.exe"),
+            stable_id("detected", "c:\\chrome.exe")
+        );
+    }
+
+    #[test]
+    fn refresh_keeps_existing_detected_browser_id_by_path() {
+        let path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+        let mut existing = build_detected_browser(path, Some("Google Chrome"), None);
+        existing.id = "detected-legacy-id".to_string();
+        existing.is_hidden = true;
+        let mut config = test_app_config(vec![existing]);
+
+        merge_detected_browsers(
+            &mut config,
+            vec![build_detected_browser(
+                "c:/program files/google/chrome/application/chrome.exe",
+                Some("Google Chrome"),
+                None,
+            )],
+        );
+
+        assert_eq!(config.browsers.len(), 1);
+        assert_eq!(config.browsers[0].id, "detected-legacy-id");
+        assert!(config.browsers[0].is_hidden);
     }
 
     #[test]
