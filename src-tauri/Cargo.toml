@@ -13,7 +13,10 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "hops_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Hops is a Windows desktop app: only the rlib linked into hops.exe is needed.
+# The template's staticlib (iOS) and cdylib (Android) outputs were never used
+# and built an extra hops_lib.dll on every build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "=2.6.2", features = [] }
