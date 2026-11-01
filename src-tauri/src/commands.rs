@@ -98,7 +98,7 @@ pub(crate) fn reset_config(app: AppHandle) -> Result<AppConfig, String> {
 #[tauri::command(async)]
 pub(crate) fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, String> {
     let config = load_or_init_config(&app, false)?;
-    let running = running_processes()?;
+    let running = running_processes(&config.browsers)?;
 
     Ok(config
         .browsers
