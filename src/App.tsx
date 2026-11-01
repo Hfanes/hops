@@ -2,21 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
-  checkForAppUpdate,
-  markUpdateNotified,
-  wasUpdateNotified,
-  getBrowserRegistrationStatus,
   getAppAboutInfo,
   getConfigFilePath,
-  getStartWithWindowsEnabled,
-  installAvailableUpdate,
-  listRunningBrowserIds,
   loadConfig,
-  notifyAppUpdateAvailable,
   openConfigFolder,
-  openWindowsDefaultApps,
   previewRouteWithConfig,
-  registerHopsAsBrowser,
   refreshBrowsers,
   resetConfig,
   routeAndOpenWithConfig,
@@ -24,25 +14,39 @@ import {
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showSettingsWindow,
   showPickerForUrl,
-  unregisterHopsAsBrowser,
   validateManualBrowser,
   validateRegexPatterns,
 } from "./services/tauri";
-import type { AppAboutInfo, AppUpdateStatus } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
-import { ModalShell } from "./components/common/ModalShell";
-import { PatternTypePicker } from "./components/common/PatternTypePicker";
+import {
+  DeleteConfirmModal,
+  type DeleteConfirmation,
+} from "./components/common/DeleteConfirmModal";
+import {
+  FeedbackModal,
+  type FeedbackMessage,
+} from "./components/common/FeedbackModal";
 import { StatusBanner } from "./components/common/StatusBanner";
 import { ScrollTopButton } from "./components/layout/ScrollTopButton";
 import { SidebarNav } from "./components/layout/SidebarNav";
 import { BottomStatusBar } from "./components/layout/BottomStatusBar";
 import { Topbar } from "./components/layout/Topbar";
 import { AboutPanel } from "./features/about/AboutPanel";
+import { useAppUpdates } from "./features/about/useAppUpdates";
+import { AddBrowserModal } from "./features/browsers/AddBrowserModal";
 import { BrowsersTab } from "./features/browsers/BrowsersTab";
+import {
+  ManualBrowserConfirmModal,
+  type ManualBrowserConfirmation,
+} from "./features/browsers/ManualBrowserConfirmModal";
+import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { RouterTester } from "./features/router/RouterTester";
+import { AddRuleModal } from "./features/rules/AddRuleModal";
 import { RulesTab } from "./features/rules/RulesTab";
+import { useRegexErrors } from "./features/rules/useRegexErrors";
 import { SettingsTab } from "./features/settings/SettingsTab";
+import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
   applySettingsDraft,
   cloneSet,
@@ -60,7 +64,6 @@ import type {
   BrowserDraft,
   BrowserConfig,
   ManualBrowserValidationResult,
-  BrowserRegistrationStatus,
   FormModal,
   RouteDecision,
   RuleDraft,
@@ -73,8 +76,6 @@ import type {
 } from "./types";
 import "./styles/App.css";
 
-const RUNNING_STATE_REFRESH_THROTTLE_MS = 1000;
-
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
@@ -84,26 +85,9 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [saveActivityCount, setSaveActivityCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
   const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
-  const [runningBrowserIds, setRunningBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [registrationStatus, setRegistrationStatus] =
-    useState<BrowserRegistrationStatus | null>(null);
-  const [startWithWindowsEnabled, setStartWithWindowsEnabled] = useState<
-    boolean | null
-  >(null);
-  const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
-    useState(false);
-  const [aboutInfo, setAboutInfo] = useState<AppAboutInfo | null>(null);
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
-    null,
-  );
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
     useState(true);
@@ -133,33 +117,13 @@ function App() {
     path: "",
     privateFlag: "",
   });
-  const [manualBrowserConfirmation, setManualBrowserConfirmation] = useState<{
-    mode: "add" | "edit";
-    browserId: string | null;
-    browser: BrowserConfig;
-    validation: ManualBrowserValidationResult;
-  } | null>(null);
-  const [feedbackModal, setFeedbackModal] = useState<{
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  } | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<
-    | {
-        kind: "manual-browser";
-        browserId: string;
-        browserName: string;
-        affectedRuleCount: number;
-      }
-    | {
-        kind: "rule";
-        ruleId: string;
-        ruleLabel: string;
-        pattern: string;
-      }
-    | null
-  >(null);
+  const [manualBrowserConfirmation, setManualBrowserConfirmation] =
+    useState<ManualBrowserConfirmation | null>(null);
+  const [feedbackModal, setFeedbackModal] = useState<FeedbackMessage | null>(
+    null,
+  );
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DeleteConfirmation | null>(null);
   const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
     useState(false);
 
@@ -186,8 +150,35 @@ function App() {
   const settingsSaveTimerRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
-  const isRunningStateRefreshInFlightRef = useRef(false);
-  const lastRunningStateRefreshAtRef = useRef(0);
+
+  const {
+    aboutInfo,
+    setAboutInfo,
+    updateStatus,
+    isCheckingUpdate,
+    isInstallingUpdate,
+    refreshAbout,
+    updateApp,
+  } = useAppUpdates({ activeTab, isLoading, setStatus });
+  const {
+    registrationStatus,
+    isRegistering,
+    startWithWindowsEnabled,
+    setStartWithWindowsEnabled,
+    isUpdatingStartWithWindows,
+    refreshRegistrationStatus,
+    refreshStartWithWindowsStatus,
+    updateStartWithWindows,
+    openDefaultAppsSettings,
+    registerBrowserIntegration,
+    unregisterBrowserIntegration,
+  } = useSystemIntegration({ setStatus });
+  const { runningBrowserIds, refreshRunningState } = useRunningBrowsers({
+    activeTab,
+    isLoading,
+    configRef,
+  });
+  const regexErrors = useRegexErrors(config);
 
   useEffect(() => {
     configRef.current = config;
@@ -252,52 +243,6 @@ function App() {
     });
   }, [visibleBrowsers]);
 
-  // Regex rules are validated by the backend so the UI uses the same Rust regex
-  // engine as routing. Keyed on id + pattern so unrelated edits skip the call.
-  const regexRules = useMemo(
-    () => config?.rules.filter((rule) => rule.patternType === "regex") ?? [],
-    [config],
-  );
-  const regexRulesKey = useMemo(
-    () => JSON.stringify(regexRules.map((rule) => [rule.id, rule.pattern])),
-    [regexRules],
-  );
-  const [regexErrors, setRegexErrors] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    const rules = regexRules;
-    if (!rules.length) {
-      setRegexErrors((current) =>
-        Object.keys(current).length ? {} : current,
-      );
-      return;
-    }
-
-    let cancelled = false;
-    validateRegexPatterns(rules.map((rule) => rule.pattern))
-      .then((results) => {
-        if (cancelled) {
-          return;
-        }
-
-        const next: Record<string, string> = {};
-        results.forEach((error, index) => {
-          if (error) {
-            next[rules[index].id] = error;
-          }
-        });
-        setRegexErrors(next);
-      })
-      .catch((error) => {
-        console.warn("Could not validate regex rules.", error);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // regexRulesKey captures every input that affects validation.
-  }, [regexRulesKey]);
-
   useEffect(() => {
     return () => {
       for (const timerId of Object.values(browserSaveTimersRef.current)) {
@@ -320,64 +265,6 @@ function App() {
   useEffect(() => {
     setFormModal(null);
   }, [activeTab]);
-
-  useEffect(() => {
-    if (activeTab !== "about") {
-      return;
-    }
-
-    void refreshAbout(false);
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (isLoading) {
-      return;
-    }
-
-    const idleId = window.requestIdleCallback(
-      () => void refreshStatusBarUpdate(),
-      { timeout: 5000 },
-    );
-    return () => window.cancelIdleCallback(idleId);
-  }, [isLoading]);
-
-  useEffect(() => {
-    if (activeTab !== "browsers" || isLoading) {
-      return;
-    }
-
-    void refreshRunningState({ force: true });
-
-    let disposed = false;
-    let unlistenFocus: (() => void) | null = null;
-
-    try {
-      void getCurrentWindow()
-        .onFocusChanged(({ payload }) => {
-          if (payload) {
-            void refreshRunningState();
-          }
-        })
-        .then((unlisten) => {
-          if (disposed) {
-            unlisten();
-            return;
-          }
-
-          unlistenFocus = unlisten;
-        })
-        .catch((error) => {
-          console.warn("Could not listen for Hops focus changes.", error);
-        });
-    } catch (error) {
-      console.warn("Could not access the current Hops window.", error);
-    }
-
-    return () => {
-      disposed = true;
-      unlistenFocus?.();
-    };
-  }, [activeTab, isLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -452,12 +339,7 @@ function App() {
     );
   }
 
-  function showFeedbackModal(options: {
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  }) {
+  function showFeedbackModal(options: FeedbackMessage) {
     setFeedbackModal(options);
   }
 
@@ -699,6 +581,80 @@ function App() {
     scheduleSettingsSave(nextConfig);
   }
 
+  // Validates a browser edit and saves it. Shared by the debounced save and
+  // the immediate flush (e.g. when an input loses focus).
+  async function saveBrowserChanges(browserId: string, baseConfig: AppConfig) {
+    try {
+      let configToSave = baseConfig;
+      const browser = configToSave.browsers.find(
+        (item) => item.id === browserId,
+      );
+      if (browser) {
+        const prepared = await validateManualBrowserConfig(browser, false, {
+          showAlert: true,
+          revertBrowserId: browserId,
+          allowConfirmationFlow: browser.source === "manual",
+        });
+        if (!prepared) {
+          return;
+        }
+
+        if (
+          browser.source === "manual" &&
+          prepared.validation.requiresConfirmation
+        ) {
+          setManualBrowserConfirmation({
+            mode: "edit",
+            browserId,
+            browser,
+            validation: prepared.validation,
+          });
+          setStatus({
+            kind: "warning",
+            text: prepared.validation.message,
+          });
+          return;
+        }
+
+        configToSave = {
+          ...configToSave,
+          browsers: configToSave.browsers.map((item) =>
+            item.id === browserId ? prepared.browser : item,
+          ),
+        };
+        configRef.current = configToSave;
+        setConfig(configToSave);
+      }
+
+      await persistConfig(configToSave, {
+        errorPrefix: "Could not save browser changes",
+        onSuccess: () => {
+          setFailedBrowserIds((current) => {
+            if (!current.has(browserId)) {
+              return current;
+            }
+            const next = cloneSet(current);
+            next.delete(browserId);
+            return next;
+          });
+        },
+        onError: () => {
+          setFailedBrowserIds((current) => {
+            const next = cloneSet(current);
+            next.add(browserId);
+            return next;
+          });
+        },
+      });
+    } finally {
+      setSavingBrowserIds((current) => {
+        const next = cloneSet(current);
+        next.delete(browserId);
+        return next;
+      });
+    }
+  }
+
   function scheduleBrowserSave(browserId: string, nextConfig: AppConfig) {
     const existingTimer = browserSaveTimersRef.current[browserId];
     if (existingTimer) {
@@ -732,87 +688,7 @@ function App() {
         return next;
       });
 
-      void (async () => {
-        try {
-          let configToSave = nextConfig;
-          const browser = configToSave.browsers.find(
-            (item) => item.id === browserId,
-          );
-          if (browser) {
-            const prepared = await validateManualBrowserConfig(browser, false, {
-              showAlert: true,
-              revertBrowserId: browserId,
-              allowConfirmationFlow: browser.source === "manual",
-            });
-            if (!prepared) {
-              return;
-            }
-
-            if (
-              browser.source === "manual" &&
-              prepared.validation.requiresConfirmation
-            ) {
-              setManualBrowserConfirmation({
-                mode: "edit",
-                browserId,
-                browser,
-                validation: prepared.validation,
-              });
-              setStatus({
-                kind: "warning",
-                text: prepared.validation.message,
-              });
-              return;
-            }
-
-            configToSave = {
-              ...configToSave,
-              browsers: configToSave.browsers.map((item) =>
-                item.id === browserId ? prepared.browser : item,
-              ),
-            };
-            configRef.current = configToSave;
-            setConfig(configToSave);
-          }
-
-          await persistConfig(configToSave, {
-            errorPrefix: "Could not save browser changes",
-            onSuccess: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                if (!current.has(browserId)) {
-                  return current;
-                }
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-            },
-            onError: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.add(browserId);
-                return next;
-              });
-            },
-          });
-        } finally {
-          setSavingBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
-        }
-      })();
+      void saveBrowserChanges(browserId, nextConfig);
     }, 500);
   }
 
@@ -836,77 +712,7 @@ function App() {
       return next;
     });
 
-    void (async () => {
-      try {
-        let configToSave = latestConfig;
-        const browser = configToSave.browsers.find(
-          (item) => item.id === browserId,
-        );
-        if (browser) {
-          const prepared = await validateManualBrowserConfig(browser, false, {
-            showAlert: true,
-            revertBrowserId: browserId,
-            allowConfirmationFlow: browser.source === "manual",
-          });
-          if (!prepared) {
-            return;
-          }
-
-          if (
-            browser.source === "manual" &&
-            prepared.validation.requiresConfirmation
-          ) {
-            setManualBrowserConfirmation({
-              mode: "edit",
-              browserId,
-              browser,
-              validation: prepared.validation,
-            });
-            setStatus({
-              kind: "warning",
-              text: prepared.validation.message,
-            });
-            return;
-          }
-
-          configToSave = {
-            ...configToSave,
-            browsers: configToSave.browsers.map((item) =>
-              item.id === browserId ? prepared.browser : item,
-            ),
-          };
-          configRef.current = configToSave;
-          setConfig(configToSave);
-        }
-
-        await persistConfig(configToSave, {
-          errorPrefix: "Could not save browser changes",
-          onSuccess: () => {
-            setFailedBrowserIds((current) => {
-              if (!current.has(browserId)) {
-                return current;
-              }
-              const next = cloneSet(current);
-              next.delete(browserId);
-              return next;
-            });
-          },
-          onError: () => {
-            setFailedBrowserIds((current) => {
-              const next = cloneSet(current);
-              next.add(browserId);
-              return next;
-            });
-          },
-        });
-      } finally {
-        setSavingBrowserIds((current) => {
-          const next = cloneSet(current);
-          next.delete(browserId);
-          return next;
-        });
-      }
-    })();
+    void saveBrowserChanges(browserId, latestConfig);
   }
 
   async function closeSettingsWindow() {
@@ -948,84 +754,6 @@ function App() {
       if (configRef.current) {
         scheduleSettingsSave(configRef.current);
       }
-    }
-  }
-
-  async function refreshRegistrationStatus() {
-    try {
-      const next = await getBrowserRegistrationStatus();
-      setRegistrationStatus(next);
-      return next;
-    } catch {
-      setRegistrationStatus(null);
-      return null;
-    }
-  }
-
-  async function refreshStartWithWindowsStatus() {
-    try {
-      const enabled = await getStartWithWindowsEnabled();
-      setStartWithWindowsEnabled(enabled);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(null);
-      setStatus({
-        kind: "warning",
-        text: `Could not read Start with Windows status: ${message}`,
-      });
-    }
-  }
-
-  async function updateStartWithWindows(checked: boolean) {
-    const previous = startWithWindowsEnabled;
-    setStartWithWindowsEnabled(checked);
-    setIsUpdatingStartWithWindows(true);
-
-    try {
-      const enabled = await saveStartWithWindowsEnabled(checked);
-      setStartWithWindowsEnabled(enabled);
-      setStatus({
-        kind: "success",
-        text: enabled
-          ? "Hops will start when you sign in."
-          : "Hops will not start when you sign in.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(previous);
-      setStatus({
-        kind: "error",
-        text: `Could not update Start with Windows: ${message}`,
-      });
-    } finally {
-      setIsUpdatingStartWithWindows(false);
-    }
-  }
-
-  async function refreshRunningState({ force = false } = {}) {
-    if (!configRef.current || isRunningStateRefreshInFlightRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-    if (
-      !force &&
-      now - lastRunningStateRefreshAtRef.current <
-        RUNNING_STATE_REFRESH_THROTTLE_MS
-    ) {
-      return;
-    }
-
-    isRunningStateRefreshInFlightRef.current = true;
-    lastRunningStateRefreshAtRef.current = now;
-
-    try {
-      const runningIds = await listRunningBrowserIds();
-      setRunningBrowserIds(new Set(runningIds));
-    } catch {
-      // Running-state refresh should be non-blocking.
-    } finally {
-      isRunningStateRefreshInFlightRef.current = false;
     }
   }
 
@@ -1533,23 +1261,6 @@ function App() {
     }
   }
 
-  async function openDefaultAppsSettings() {
-    try {
-      await openWindowsDefaultApps();
-      setStatus({
-        kind: "success",
-        text: "Opened Windows Default Apps settings.",
-      });
-      await refreshRegistrationStatus();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not open Windows settings: ${message}`,
-      });
-    }
-  }
-
   async function openConfigurationFolder() {
     try {
       await openConfigFolder();
@@ -1563,43 +1274,6 @@ function App() {
         kind: "error",
         text: `Could not open config folder: ${message}`,
       });
-    }
-  }
-
-  async function registerBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await registerHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops was registered in Windows Default Apps. Now pick Hops for HTTP and HTTPS in Windows settings.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ kind: "error", text: `Could not register Hops: ${message}` });
-    } finally {
-      setIsRegistering(false);
-    }
-  }
-
-  async function unregisterBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await unregisterHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops registration keys were removed from your user profile.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not unregister Hops: ${message}`,
-      });
-    } finally {
-      setIsRegistering(false);
     }
   }
 
@@ -1791,84 +1465,6 @@ function App() {
     }
   }
 
-  // A user-visible check (the button) always hits the network; silent
-  // refreshes (opening the About tab) reuse the daily cached result.
-  async function refreshAbout(
-    showResultStatus = true,
-    force = showResultStatus,
-  ) {
-    setIsCheckingUpdate(true);
-    try {
-      const [nextAboutInfo, nextUpdateStatus] = await Promise.all([
-        getAppAboutInfo(),
-        checkForAppUpdate({ force }),
-      ]);
-      setAboutInfo(nextAboutInfo);
-      setUpdateStatus(nextUpdateStatus);
-
-      if (showResultStatus) {
-        setStatus({
-          kind: nextUpdateStatus.available ? "warning" : "success",
-          text: nextUpdateStatus.available
-            ? `Hops ${nextUpdateStatus.version} is available.`
-            : "Hops is up to date.",
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not check for updates: ${message}`,
-      });
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function refreshStatusBarUpdate() {
-    setIsCheckingUpdate(true);
-    try {
-      const nextUpdateStatus = await checkForAppUpdate();
-      setUpdateStatus(nextUpdateStatus);
-
-      // Remembered across settings windows, which are destroyed on close, so
-      // the same update is announced only once.
-      const updateVersionKey = nextUpdateStatus.version ?? "unknown";
-      if (nextUpdateStatus.available && !wasUpdateNotified(updateVersionKey)) {
-        markUpdateNotified(updateVersionKey);
-        try {
-          await notifyAppUpdateAvailable(nextUpdateStatus);
-        } catch (error) {
-          console.warn("Could not show update notification.", error);
-        }
-      }
-    } catch (error) {
-      console.warn("Could not check for updates.", error);
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function updateApp() {
-    setIsInstallingUpdate(true);
-    try {
-      const installed = await installAvailableUpdate();
-
-      if (!installed) {
-        setStatus({ kind: "success", text: "Hops is already up to date." });
-        await refreshAbout(false, true);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not install update: ${message}`,
-      });
-    } finally {
-      setIsInstallingUpdate(false);
-    }
-  }
-
   function scrollCurrentPageToTop() {
     contentAreaRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
@@ -1914,251 +1510,46 @@ function App() {
 
   const activeFormModal =
     formModal === "manual-browser" ? (
-      <ModalShell
-        title={<h3 id="manual-browser-title">Add manual browser</h3>}
-        titleId="manual-browser-title"
+      <AddBrowserModal
+        browserDraft={browserDraft}
+        isSaving={isSaving}
+        onSetBrowserDraft={setBrowserDraft}
+        onAdd={() => void addManualBrowser()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Name
-          <input
-            value={browserDraft.name}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                name: value,
-              }));
-            }}
-            placeholder="Portable Chrome"
-          />
-        </label>
-        <label>
-          Executable path
-          <input
-            value={browserDraft.path}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                path: value,
-              }));
-            }}
-            placeholder="C:\\Tools\\Chrome\\chrome.exe"
-          />
-        </label>
-        <label>
-          Private mode flag
-          <input
-            value={browserDraft.privateFlag}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                privateFlag: value,
-              }));
-            }}
-            placeholder="--incognito"
-          />
-        </label>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addManualBrowser()}
-            disabled={isSaving}
-          >
-            Add browser
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : formModal === "rule" ? (
-      <ModalShell
-        title={
-          <div>
-            <h3 id="rule-modal-title">Add rule</h3>
-            <p className="setting-help">New rules are created as enabled.</p>
-          </div>
-        }
-        titleId="rule-modal-title"
+      <AddRuleModal
+        ruleDraft={ruleDraft}
+        visibleBrowsers={visibleBrowsers}
+        isSaving={isSaving}
+        onSetRuleDraft={setRuleDraft}
+        onAdd={() => void addRule()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Pattern
-          <input
-            value={ruleDraft.pattern}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                pattern: value,
-              }));
-            }}
-            placeholder="*.notion.so"
-          />
-        </label>
-        <PatternTypePicker
-          name="new-rule-pattern-type"
-          value={ruleDraft.patternType}
-          onChange={(value) =>
-            setRuleDraft((current) => ({
-              ...current,
-              patternType: value,
-            }))
-          }
-        />
-        <label>
-          Browser
-          <select
-            value={ruleDraft.browserId}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                browserId: value,
-              }));
-            }}
-          >
-            <option value="">Choose browser</option>
-            {visibleBrowsers.map((browser) => (
-              <option key={browser.id} value={browser.id}>
-                {browser.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="dual-toggle">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={ruleDraft.privateMode}
-              onChange={(event) => {
-                const checked = event.currentTarget.checked;
-                setRuleDraft((current) => ({
-                  ...current,
-                  privateMode: checked,
-                }));
-              }}
-            />
-            <span>Private mode</span>
-          </label>
-        </div>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addRule()}
-            disabled={isSaving || !visibleBrowsers.length}
-          >
-            Add rule
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : null;
 
   const manualBrowserConfirmationModal = manualBrowserConfirmation ? (
-    <ModalShell
-      title={<h3 id="manual-browser-confirm-title">Confirm manual browser</h3>}
-      titleId="manual-browser-confirm-title"
+    <ManualBrowserConfirmModal
+      confirmation={manualBrowserConfirmation}
+      isConfirming={isConfirmingManualBrowser}
+      onConfirm={() => void confirmManualBrowser()}
       onClose={() => setManualBrowserConfirmation(null)}
-    >
-      <p className="setting-help">
-        {manualBrowserConfirmation.validation.message}
-      </p>
-      <label>
-        Executable path
-        <input value={manualBrowserConfirmation.browser.path} readOnly />
-      </label>
-      <label>
-        Name
-        <input value={manualBrowserConfirmation.browser.name} readOnly />
-      </label>
-      <div className="inline-actions">
-        <button
-          type="button"
-          onClick={() => void confirmManualBrowser()}
-          disabled={isConfirmingManualBrowser}
-        >
-          {isConfirmingManualBrowser ? "Confirming..." : "Confirm and trust"}
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          disabled={isConfirmingManualBrowser}
-          onClick={() => setManualBrowserConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const deleteConfirmationModal = deleteConfirmation ? (
-    <ModalShell
-      title={<h3 id="delete-confirm-title">Confirm delete</h3>}
-      titleId="delete-confirm-title"
+    <DeleteConfirmModal
+      confirmation={deleteConfirmation}
+      onConfirm={confirmDelete}
       onClose={() => setDeleteConfirmation(null)}
-    >
-      {deleteConfirmation.kind === "manual-browser" ? (
-        <p className="setting-help">
-          Delete manual browser "{deleteConfirmation.browserName}"? This also
-          removes{" "}
-          {deleteConfirmation.affectedRuleCount === 0
-            ? "no rules"
-            : deleteConfirmation.affectedRuleCount === 1
-              ? "1 rule that targets it"
-              : `${deleteConfirmation.affectedRuleCount} rules that target it`}
-          .
-        </p>
-      ) : (
-        <p className="setting-help">
-          Delete {deleteConfirmation.ruleLabel}
-          {deleteConfirmation.pattern.trim()
-            ? ` for "${deleteConfirmation.pattern}"`
-            : ""}
-          ? This cannot be undone.
-        </p>
-      )}
-      <div className="inline-actions">
-        <button type="button" className="danger" onClick={confirmDelete}>
-          Delete
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => setDeleteConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const feedbackModalElement = feedbackModal ? (
-    <ModalShell
-      title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
-      titleId="feedback-modal-title"
+    <FeedbackModal
+      feedback={feedbackModal}
       onClose={() => setFeedbackModal(null)}
-    >
-      <p className={`status ${feedbackModal.kind}`}>{feedbackModal.message}</p>
-      <div className="inline-actions">
-        <button type="button" onClick={() => setFeedbackModal(null)}>
-          {feedbackModal.confirmLabel ?? "OK"}
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   if (isLoading) {
