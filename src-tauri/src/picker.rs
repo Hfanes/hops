@@ -13,11 +13,9 @@ use crate::{
     PICKER_MENU_CHROME_HEIGHT, PICKER_MENU_MAX_HEIGHT, PICKER_MENU_MIN_HEIGHT,
     PICKER_MENU_ROW_HEIGHT, PICKER_MENU_WIDTH, PICKER_SESSION_EVENT, PICKER_WINDOW_LABEL,
 };
-#[cfg(target_os = "windows")]
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
     WebviewUrl, WebviewWindowBuilder,
@@ -30,19 +28,6 @@ const VK_CONTROL: i32 = 0x11;
 #[cfg(target_os = "windows")]
 const VK_MENU: i32 = 0x12;
 #[cfg(target_os = "windows")]
-const WH_MOUSE_LL: i32 = 14;
-#[cfg(target_os = "windows")]
-const HC_ACTION: i32 = 0;
-#[cfg(target_os = "windows")]
-const WM_LBUTTONDOWN: u32 = 0x0201;
-/// How long a Ctrl+Shift click is remembered while its link reaches Hops.
-///
-/// A link forwarded to the running tray app arrives well within this. It is kept
-/// short so a Ctrl+Shift click on something that is not a link cannot force the
-/// picker for a different link opened later.
-const PICKER_SHORTCUT_LATCH_DURATION: Duration = Duration::from_secs(3);
-
-#[cfg(target_os = "windows")]
 #[repr(C)]
 struct WinPoint {
     x: i32,
@@ -50,104 +35,16 @@ struct WinPoint {
 }
 
 #[cfg(target_os = "windows")]
-#[repr(C)]
-struct WinMsg {
-    hwnd: isize,
-    message: u32,
-    w_param: usize,
-    l_param: isize,
-    time: u32,
-    point: WinPoint,
-    private: u32,
-}
-
-#[cfg(target_os = "windows")]
-type HookProc = Option<unsafe extern "system" fn(i32, usize, isize) -> isize>;
-
-#[cfg(target_os = "windows")]
 #[link(name = "User32")]
 unsafe extern "system" {
     fn GetAsyncKeyState(v_key: i32) -> i16;
     fn GetCursorPos(lp_point: *mut WinPoint) -> i32;
-    fn SetWindowsHookExW(
-        id_hook: i32,
-        hook_proc: HookProc,
-        instance: isize,
-        thread_id: u32,
-    ) -> isize;
-    fn CallNextHookEx(hook: isize, code: i32, w_param: usize, l_param: isize) -> isize;
-    fn GetMessageW(message: *mut WinMsg, window: isize, filter_min: u32, filter_max: u32) -> i32;
-    fn UnhookWindowsHookEx(hook: isize) -> i32;
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "Kernel32")]
-unsafe extern "system" {
-    fn GetModuleHandleW(module_name: *const u16) -> isize;
 }
 
 #[derive(Default)]
 pub(crate) struct PickerState {
     pub(crate) session: Mutex<Option<PickerSession>>,
     pub(crate) idle_destroy_token: Mutex<u64>,
-    shortcut_latch: Arc<PickerShortcutLatch>,
-}
-
-#[derive(Default)]
-struct PickerShortcutLatch {
-    last_ctrl_shift_click: Mutex<Option<Instant>>,
-}
-
-impl PickerState {
-    #[cfg(test)]
-    fn remember_picker_shortcut_click_at(&self, clicked_at: Instant) {
-        self.shortcut_latch.remember_click_at(clicked_at);
-    }
-
-    fn consume_recent_picker_shortcut_at(&self, now: Instant) -> bool {
-        self.shortcut_latch
-            .consume_if_recent_at(now, PICKER_SHORTCUT_LATCH_DURATION)
-    }
-}
-
-impl PickerShortcutLatch {
-    fn remember_click_now(&self) {
-        self.remember_click_at(Instant::now());
-    }
-
-    fn remember_click_at(&self, clicked_at: Instant) {
-        match self.last_ctrl_shift_click.lock() {
-            Ok(mut last_click) => {
-                *last_click = Some(clicked_at);
-            }
-            Err(_) => eprintln!("Hops picker: shortcut latch lock was poisoned."),
-        }
-    }
-
-    fn clear(&self) {
-        match self.last_ctrl_shift_click.lock() {
-            Ok(mut last_click) => *last_click = None,
-            Err(_) => eprintln!("Hops picker: shortcut latch lock was poisoned."),
-        }
-    }
-
-    fn consume_if_recent_at(&self, now: Instant, max_age: Duration) -> bool {
-        let mut last_click = match self.last_ctrl_shift_click.lock() {
-            Ok(last_click) => last_click,
-            Err(_) => {
-                eprintln!("Hops picker: shortcut latch lock was poisoned.");
-                return false;
-            }
-        };
-
-        let Some(clicked_at) = *last_click else {
-            return false;
-        };
-
-        *last_click = None;
-        now.checked_duration_since(clicked_at)
-            .is_none_or(|age| age <= max_age)
-    }
 }
 
 fn clean_cli_value(value: &str) -> String {
@@ -164,27 +61,6 @@ pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
     false
-}
-
-fn is_ctrl_shift_picker_trigger_active_with_latch<F>(
-    state: &PickerState,
-    mut is_currently_active: F,
-    now: Instant,
-) -> bool
-where
-    F: FnMut() -> bool,
-{
-    let currently_active = is_currently_active();
-    let recently_clicked = state.consume_recent_picker_shortcut_at(now);
-    currently_active || recently_clicked
-}
-
-fn is_ctrl_shift_picker_trigger_active(state: &PickerState) -> bool {
-    is_ctrl_shift_picker_trigger_active_with_latch(
-        state,
-        is_ctrl_shift_picker_trigger_currently_active,
-        Instant::now(),
-    )
 }
 
 #[cfg(target_os = "windows")]
@@ -212,99 +88,6 @@ fn current_cursor_position() -> Option<(i32, i32)> {
 fn current_cursor_position() -> Option<(i32, i32)> {
     None
 }
-
-#[cfg(target_os = "windows")]
-struct PickerShortcutClickObserver {
-    latch: Arc<PickerShortcutLatch>,
-}
-
-#[cfg(target_os = "windows")]
-impl PickerShortcutClickObserver {
-    fn new(latch: Arc<PickerShortcutLatch>) -> Self {
-        Self { latch }
-    }
-
-    fn handle_mouse_message_with_key_state<F>(&self, message: u32, mut keys_active: F)
-    where
-        F: FnMut() -> bool,
-    {
-        if message != WM_LBUTTONDOWN {
-            return;
-        }
-
-        if keys_active() {
-            self.latch.remember_click_now();
-        } else {
-            self.latch.clear();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-static PICKER_SHORTCUT_OBSERVER: OnceLock<Arc<PickerShortcutClickObserver>> = OnceLock::new();
-
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn picker_mouse_hook_proc(
-    code: i32,
-    w_param: usize,
-    l_param: isize,
-) -> isize {
-    if code == HC_ACTION {
-        if let Some(observer) = PICKER_SHORTCUT_OBSERVER.get() {
-            observer.handle_mouse_message_with_key_state(
-                w_param as u32,
-                is_ctrl_shift_picker_trigger_currently_active,
-            );
-        }
-    }
-
-    unsafe { CallNextHookEx(0, code, w_param, l_param) }
-}
-
-#[cfg(target_os = "windows")]
-fn run_picker_shortcut_hook_message_loop() {
-    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
-    let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(picker_mouse_hook_proc), module, 0) };
-
-    if hook == 0 {
-        eprintln!(
-            "Hops picker: could not install Ctrl+Shift click observer: {}",
-            std::io::Error::last_os_error()
-        );
-        return;
-    }
-
-    let mut message = WinMsg {
-        hwnd: 0,
-        message: 0,
-        w_param: 0,
-        l_param: 0,
-        time: 0,
-        point: WinPoint { x: 0, y: 0 },
-        private: 0,
-    };
-
-    while unsafe { GetMessageW(&mut message, 0, 0, 0) } > 0 {}
-    unsafe {
-        UnhookWindowsHookEx(hook);
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn install_picker_shortcut_observer(state: &PickerState) {
-    let observer = Arc::new(PickerShortcutClickObserver::new(Arc::clone(
-        &state.shortcut_latch,
-    )));
-
-    if PICKER_SHORTCUT_OBSERVER.set(observer).is_err() {
-        return;
-    }
-
-    thread::spawn(run_picker_shortcut_hook_message_loop);
-}
-
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn install_picker_shortcut_observer(_state: &PickerState) {}
 
 pub(crate) fn extract_url_from_args(args: &[String]) -> Option<String> {
     for (index, arg) in args.iter().enumerate() {
@@ -796,7 +579,7 @@ pub(crate) fn handle_incoming_url(
     force_picker_hint: bool,
 ) -> Result<RouteDecision, String> {
     let (config, detected_picker_trigger) = load_config_with_picker_trigger_snapshot(
-        || is_ctrl_shift_picker_trigger_active(state),
+        is_ctrl_shift_picker_trigger_currently_active,
         || load_or_init_config(app, false),
     )?;
     let force_picker = force_picker_hint || detected_picker_trigger;
@@ -1046,118 +829,6 @@ mod tests {
         assert_eq!(decision.action, RouteAction::ShowPicker);
         assert_eq!(decision.reason, RouteReason::CtrlShiftClick);
         assert_eq!(scan_count.get(), 0);
-    }
-
-    #[test]
-    fn recent_picker_shortcut_click_forces_picker_after_current_keys_are_released() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + PICKER_SHORTCUT_LATCH_DURATION / 2
-        ));
-    }
-
-    #[test]
-    fn picker_shortcut_click_is_remembered_up_to_the_latch_duration() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + PICKER_SHORTCUT_LATCH_DURATION
-        ));
-    }
-
-    #[test]
-    fn picker_shortcut_latch_is_short() {
-        // A long latch lets an unrelated Ctrl+Shift click force the picker for a
-        // link opened much later.
-        assert!(PICKER_SHORTCUT_LATCH_DURATION <= Duration::from_secs(5));
-    }
-
-    #[test]
-    fn expired_picker_shortcut_latch_does_not_force_picker() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + PICKER_SHORTCUT_LATCH_DURATION + Duration::from_millis(1)
-        ));
-    }
-
-    #[test]
-    fn consumed_picker_shortcut_latch_does_not_force_second_url() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(500)
-        ));
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(600)
-        ));
-    }
-
-    #[test]
-    fn live_key_state_also_consumes_recent_shortcut_click() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || true,
-            now + Duration::from_millis(500)
-        ));
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(600)
-        ));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn shortcut_observer_records_only_ctrl_shift_left_clicks() {
-        let state = PickerState::default();
-        let observer = PickerShortcutClickObserver::new(Arc::clone(&state.shortcut_latch));
-        let now = std::time::Instant::now();
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || false);
-        assert!(!state.consume_recent_picker_shortcut_at(now));
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN + 1, || true);
-        assert!(!state.consume_recent_picker_shortcut_at(now));
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || true);
-        assert!(state.consume_recent_picker_shortcut_at(Instant::now()));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn ordinary_left_click_clears_pending_shortcut_click() {
-        let state = PickerState::default();
-        let observer = PickerShortcutClickObserver::new(Arc::clone(&state.shortcut_latch));
-        let now = std::time::Instant::now();
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || true);
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || false);
-
-        assert!(!state.consume_recent_picker_shortcut_at(now));
     }
 
     #[test]
