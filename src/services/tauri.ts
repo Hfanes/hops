@@ -60,6 +60,16 @@ export function validateManualBrowser(
   });
 }
 
+/**
+ * Validates regex patterns with the backend's Rust regex engine, which is what
+ * routing uses. Returns one entry per pattern: null when valid, else the error.
+ */
+export function validateRegexPatterns(
+  patterns: string[],
+): Promise<Array<string | null>> {
+  return invoke<Array<string | null>>("validate_regex_patterns", { patterns });
+}
+
 export function refreshBrowsers(): Promise<AppConfig> {
   return invoke<AppConfig>("refresh_browsers");
 }

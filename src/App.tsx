@@ -24,6 +24,7 @@ import {
   showPickerForUrl,
   unregisterHopsAsBrowser,
   validateManualBrowser,
+  validateRegexPatterns,
 } from "./services/tauri";
 import type { AppAboutInfo, AppUpdateStatus } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
@@ -46,7 +47,6 @@ import {
   createBrowserId,
   createRuleId,
   EMPTY_STATUS,
-  regexErrorsByRule,
   rejectAfter,
   ROUTE_OPEN_TIMEOUT_MS,
   settingsDraftFromConfig,
@@ -251,10 +251,51 @@ function App() {
     });
   }, [visibleBrowsers]);
 
-  const regexErrors = useMemo(
-    () => (config ? regexErrorsByRule(config.rules) : {}),
+  // Regex rules are validated by the backend so the UI uses the same Rust regex
+  // engine as routing. Keyed on id + pattern so unrelated edits skip the call.
+  const regexRules = useMemo(
+    () => config?.rules.filter((rule) => rule.patternType === "regex") ?? [],
     [config],
   );
+  const regexRulesKey = useMemo(
+    () => JSON.stringify(regexRules.map((rule) => [rule.id, rule.pattern])),
+    [regexRules],
+  );
+  const [regexErrors, setRegexErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const rules = regexRules;
+    if (!rules.length) {
+      setRegexErrors((current) =>
+        Object.keys(current).length ? {} : current,
+      );
+      return;
+    }
+
+    let cancelled = false;
+    validateRegexPatterns(rules.map((rule) => rule.pattern))
+      .then((results) => {
+        if (cancelled) {
+          return;
+        }
+
+        const next: Record<string, string> = {};
+        results.forEach((error, index) => {
+          if (error) {
+            next[rules[index].id] = error;
+          }
+        });
+        setRegexErrors(next);
+      })
+      .catch((error) => {
+        console.warn("Could not validate regex rules.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // regexRulesKey captures every input that affects validation.
+  }, [regexRulesKey]);
 
   useEffect(() => {
     return () => {
@@ -1450,10 +1491,14 @@ function App() {
 
     if (ruleDraft.patternType === "regex") {
       try {
-        new RegExp(pattern);
+        const [regexError] = await validateRegexPatterns([pattern]);
+        if (regexError) {
+          setStatus({ kind: "error", text: `Regex is invalid: ${regexError}` });
+          return;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setStatus({ kind: "error", text: `Regex is invalid: ${message}` });
+        setStatus({ kind: "error", text: `Could not validate regex: ${message}` });
         return;
       }
     }

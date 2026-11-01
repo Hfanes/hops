@@ -3,8 +3,8 @@ use crate::browsers::{
     merge_detected_browsers, normalize_manual_browser_entries, validate_browser_for_launch,
 };
 use crate::models::{AppConfig, BrowserConfig, RulePatternType, ThemePreference};
+use crate::routing::regex_pattern_error;
 use crate::CONFIG_FILENAME;
-use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -160,12 +160,12 @@ pub(crate) fn validate_config(config: &AppConfig) -> Result<(), String> {
         }
 
         if rule.pattern_type == RulePatternType::Regex {
-            Regex::new(&rule.pattern).map_err(|error| {
-                format!(
+            if let Some(error) = regex_pattern_error(&rule.pattern) {
+                return Err(format!(
                     "Rule '{}' has an invalid regex pattern '{}': {error}",
                     rule.id, rule.pattern
-                )
-            })?;
+                ));
+            }
         }
     }
 
