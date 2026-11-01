@@ -22,24 +22,13 @@ use tauri::{
 };
 
 #[cfg(target_os = "windows")]
-const VK_SHIFT: i32 = 0x10;
+use windows_sys::Win32::Foundation::POINT;
 #[cfg(target_os = "windows")]
-const VK_CONTROL: i32 = 0x11;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
+};
 #[cfg(target_os = "windows")]
-const VK_MENU: i32 = 0x12;
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct WinPoint {
-    x: i32,
-    y: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "User32")]
-unsafe extern "system" {
-    fn GetAsyncKeyState(v_key: i32) -> i16;
-    fn GetCursorPos(lp_point: *mut WinPoint) -> i32;
-}
+use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 #[derive(Default)]
 pub(crate) struct PickerState {
@@ -51,11 +40,15 @@ fn clean_cli_value(value: &str) -> String {
     value.trim().trim_matches('"').to_string()
 }
 
+/// Whether `key` is physically held right now (the high bit of GetAsyncKeyState).
+#[cfg(target_os = "windows")]
+fn is_key_down(key: VIRTUAL_KEY) -> bool {
+    (unsafe { GetAsyncKeyState(i32::from(key)) }) < 0
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
-    let ctrl_pressed = unsafe { GetAsyncKeyState(VK_CONTROL) } < 0;
-    let shift_pressed = unsafe { GetAsyncKeyState(VK_SHIFT) } < 0;
-    ctrl_pressed && shift_pressed
+    is_key_down(VK_CONTROL) && is_key_down(VK_SHIFT)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -65,7 +58,7 @@ pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_alt_pressed() -> bool {
-    (unsafe { GetAsyncKeyState(VK_MENU) }) < 0
+    is_key_down(VK_MENU)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -75,7 +68,7 @@ fn is_alt_pressed() -> bool {
 
 #[cfg(target_os = "windows")]
 fn current_cursor_position() -> Option<(i32, i32)> {
-    let mut point = WinPoint { x: 0, y: 0 };
+    let mut point = POINT { x: 0, y: 0 };
     let success = unsafe { GetCursorPos(&mut point) };
     if success == 0 {
         return None;
