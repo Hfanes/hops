@@ -22,17 +22,22 @@ use crate::registration::{
 use crate::routing::{open_url_with_browser, regex_pattern_error, resolve_route};
 use tauri::{AppHandle, State};
 
-#[tauri::command]
+// Commands that touch the disk or registry, scan processes, or spawn programs
+// are `async` so they run off the main thread and never freeze the UI. Config
+// access is serialized by `ConfigCache`. Only commands that read in-memory state
+// or move windows stay synchronous.
+
+#[tauri::command(async)]
 pub(crate) fn load_config(app: AppHandle) -> Result<AppConfig, String> {
     load_or_init_config(&app, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_config_file_path(app: AppHandle) -> Result<String, String> {
     config_file_path(&app).map(|path| path.display().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn open_config_folder(app: AppHandle) -> Result<(), String> {
     let config_path = config_file_path(&app)?;
     let config_folder = config_path
@@ -60,12 +65,12 @@ pub(crate) fn open_config_folder(app: AppHandle) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
     save_config_internal(&app, config, true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn validate_manual_browser(
     request: ManualBrowserValidationRequest,
 ) -> Result<ManualBrowserValidationResult, String> {
@@ -89,7 +94,7 @@ pub(crate) fn refresh_browsers(app: AppHandle) -> Result<AppConfig, String> {
     save_config_internal(&app, config, false)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn reset_config(app: AppHandle) -> Result<AppConfig, String> {
     let config = reset_config_with_detected_browsers(detect_browsers(), true);
     save_config_internal(&app, config, false)
@@ -221,22 +226,22 @@ pub(crate) fn show_settings_window_command(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn open_windows_default_apps() -> Result<(), String> {
     open_windows_default_apps_internal()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn get_browser_registration_status() -> Result<BrowserRegistrationStatus, String> {
     browser_registration_status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn register_hops_as_browser() -> Result<BrowserRegistrationStatus, String> {
     register_hops_as_browser_internal()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn unregister_hops_as_browser() -> Result<BrowserRegistrationStatus, String> {
     unregister_hops_as_browser_internal()
 }
