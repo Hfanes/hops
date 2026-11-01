@@ -2,21 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
-  checkForAppUpdate,
-  markUpdateNotified,
-  wasUpdateNotified,
-  getBrowserRegistrationStatus,
   getAppAboutInfo,
   getConfigFilePath,
-  getStartWithWindowsEnabled,
-  installAvailableUpdate,
-  listRunningBrowserIds,
   loadConfig,
-  notifyAppUpdateAvailable,
   openConfigFolder,
-  openWindowsDefaultApps,
   previewRouteWithConfig,
-  registerHopsAsBrowser,
   refreshBrowsers,
   resetConfig,
   routeAndOpenWithConfig,
@@ -24,11 +14,9 @@ import {
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showSettingsWindow,
   showPickerForUrl,
-  unregisterHopsAsBrowser,
   validateManualBrowser,
   validateRegexPatterns,
 } from "./services/tauri";
-import type { AppAboutInfo, AppUpdateStatus } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
 import { ModalShell } from "./components/common/ModalShell";
 import { PatternTypePicker } from "./components/common/PatternTypePicker";
@@ -38,11 +26,15 @@ import { SidebarNav } from "./components/layout/SidebarNav";
 import { BottomStatusBar } from "./components/layout/BottomStatusBar";
 import { Topbar } from "./components/layout/Topbar";
 import { AboutPanel } from "./features/about/AboutPanel";
+import { useAppUpdates } from "./features/about/useAppUpdates";
 import { BrowsersTab } from "./features/browsers/BrowsersTab";
+import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { RouterTester } from "./features/router/RouterTester";
 import { RulesTab } from "./features/rules/RulesTab";
+import { useRegexErrors } from "./features/rules/useRegexErrors";
 import { SettingsTab } from "./features/settings/SettingsTab";
+import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
   applySettingsDraft,
   cloneSet,
@@ -60,7 +52,6 @@ import type {
   BrowserDraft,
   BrowserConfig,
   ManualBrowserValidationResult,
-  BrowserRegistrationStatus,
   FormModal,
   RouteDecision,
   RuleDraft,
@@ -73,8 +64,6 @@ import type {
 } from "./types";
 import "./styles/App.css";
 
-const RUNNING_STATE_REFRESH_THROTTLE_MS = 1000;
-
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
@@ -84,26 +73,9 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [saveActivityCount, setSaveActivityCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
   const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
-  const [runningBrowserIds, setRunningBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [registrationStatus, setRegistrationStatus] =
-    useState<BrowserRegistrationStatus | null>(null);
-  const [startWithWindowsEnabled, setStartWithWindowsEnabled] = useState<
-    boolean | null
-  >(null);
-  const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
-    useState(false);
-  const [aboutInfo, setAboutInfo] = useState<AppAboutInfo | null>(null);
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
-    null,
-  );
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
     useState(true);
@@ -186,8 +158,35 @@ function App() {
   const settingsSaveTimerRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
-  const isRunningStateRefreshInFlightRef = useRef(false);
-  const lastRunningStateRefreshAtRef = useRef(0);
+
+  const {
+    aboutInfo,
+    setAboutInfo,
+    updateStatus,
+    isCheckingUpdate,
+    isInstallingUpdate,
+    refreshAbout,
+    updateApp,
+  } = useAppUpdates({ activeTab, isLoading, setStatus });
+  const {
+    registrationStatus,
+    isRegistering,
+    startWithWindowsEnabled,
+    setStartWithWindowsEnabled,
+    isUpdatingStartWithWindows,
+    refreshRegistrationStatus,
+    refreshStartWithWindowsStatus,
+    updateStartWithWindows,
+    openDefaultAppsSettings,
+    registerBrowserIntegration,
+    unregisterBrowserIntegration,
+  } = useSystemIntegration({ setStatus });
+  const { runningBrowserIds, refreshRunningState } = useRunningBrowsers({
+    activeTab,
+    isLoading,
+    configRef,
+  });
+  const regexErrors = useRegexErrors(config);
 
   useEffect(() => {
     configRef.current = config;
@@ -252,52 +251,6 @@ function App() {
     });
   }, [visibleBrowsers]);
 
-  // Regex rules are validated by the backend so the UI uses the same Rust regex
-  // engine as routing. Keyed on id + pattern so unrelated edits skip the call.
-  const regexRules = useMemo(
-    () => config?.rules.filter((rule) => rule.patternType === "regex") ?? [],
-    [config],
-  );
-  const regexRulesKey = useMemo(
-    () => JSON.stringify(regexRules.map((rule) => [rule.id, rule.pattern])),
-    [regexRules],
-  );
-  const [regexErrors, setRegexErrors] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    const rules = regexRules;
-    if (!rules.length) {
-      setRegexErrors((current) =>
-        Object.keys(current).length ? {} : current,
-      );
-      return;
-    }
-
-    let cancelled = false;
-    validateRegexPatterns(rules.map((rule) => rule.pattern))
-      .then((results) => {
-        if (cancelled) {
-          return;
-        }
-
-        const next: Record<string, string> = {};
-        results.forEach((error, index) => {
-          if (error) {
-            next[rules[index].id] = error;
-          }
-        });
-        setRegexErrors(next);
-      })
-      .catch((error) => {
-        console.warn("Could not validate regex rules.", error);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // regexRulesKey captures every input that affects validation.
-  }, [regexRulesKey]);
-
   useEffect(() => {
     return () => {
       for (const timerId of Object.values(browserSaveTimersRef.current)) {
@@ -320,64 +273,6 @@ function App() {
   useEffect(() => {
     setFormModal(null);
   }, [activeTab]);
-
-  useEffect(() => {
-    if (activeTab !== "about") {
-      return;
-    }
-
-    void refreshAbout(false);
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (isLoading) {
-      return;
-    }
-
-    const idleId = window.requestIdleCallback(
-      () => void refreshStatusBarUpdate(),
-      { timeout: 5000 },
-    );
-    return () => window.cancelIdleCallback(idleId);
-  }, [isLoading]);
-
-  useEffect(() => {
-    if (activeTab !== "browsers" || isLoading) {
-      return;
-    }
-
-    void refreshRunningState({ force: true });
-
-    let disposed = false;
-    let unlistenFocus: (() => void) | null = null;
-
-    try {
-      void getCurrentWindow()
-        .onFocusChanged(({ payload }) => {
-          if (payload) {
-            void refreshRunningState();
-          }
-        })
-        .then((unlisten) => {
-          if (disposed) {
-            unlisten();
-            return;
-          }
-
-          unlistenFocus = unlisten;
-        })
-        .catch((error) => {
-          console.warn("Could not listen for Hops focus changes.", error);
-        });
-    } catch (error) {
-      console.warn("Could not access the current Hops window.", error);
-    }
-
-    return () => {
-      disposed = true;
-      unlistenFocus?.();
-    };
-  }, [activeTab, isLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -951,84 +846,6 @@ function App() {
     }
   }
 
-  async function refreshRegistrationStatus() {
-    try {
-      const next = await getBrowserRegistrationStatus();
-      setRegistrationStatus(next);
-      return next;
-    } catch {
-      setRegistrationStatus(null);
-      return null;
-    }
-  }
-
-  async function refreshStartWithWindowsStatus() {
-    try {
-      const enabled = await getStartWithWindowsEnabled();
-      setStartWithWindowsEnabled(enabled);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(null);
-      setStatus({
-        kind: "warning",
-        text: `Could not read Start with Windows status: ${message}`,
-      });
-    }
-  }
-
-  async function updateStartWithWindows(checked: boolean) {
-    const previous = startWithWindowsEnabled;
-    setStartWithWindowsEnabled(checked);
-    setIsUpdatingStartWithWindows(true);
-
-    try {
-      const enabled = await saveStartWithWindowsEnabled(checked);
-      setStartWithWindowsEnabled(enabled);
-      setStatus({
-        kind: "success",
-        text: enabled
-          ? "Hops will start when you sign in."
-          : "Hops will not start when you sign in.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(previous);
-      setStatus({
-        kind: "error",
-        text: `Could not update Start with Windows: ${message}`,
-      });
-    } finally {
-      setIsUpdatingStartWithWindows(false);
-    }
-  }
-
-  async function refreshRunningState({ force = false } = {}) {
-    if (!configRef.current || isRunningStateRefreshInFlightRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-    if (
-      !force &&
-      now - lastRunningStateRefreshAtRef.current <
-        RUNNING_STATE_REFRESH_THROTTLE_MS
-    ) {
-      return;
-    }
-
-    isRunningStateRefreshInFlightRef.current = true;
-    lastRunningStateRefreshAtRef.current = now;
-
-    try {
-      const runningIds = await listRunningBrowserIds();
-      setRunningBrowserIds(new Set(runningIds));
-    } catch {
-      // Running-state refresh should be non-blocking.
-    } finally {
-      isRunningStateRefreshInFlightRef.current = false;
-    }
-  }
-
   async function handleRefreshBrowsers() {
     setIsRefreshing(true);
     try {
@@ -1533,23 +1350,6 @@ function App() {
     }
   }
 
-  async function openDefaultAppsSettings() {
-    try {
-      await openWindowsDefaultApps();
-      setStatus({
-        kind: "success",
-        text: "Opened Windows Default Apps settings.",
-      });
-      await refreshRegistrationStatus();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not open Windows settings: ${message}`,
-      });
-    }
-  }
-
   async function openConfigurationFolder() {
     try {
       await openConfigFolder();
@@ -1563,43 +1363,6 @@ function App() {
         kind: "error",
         text: `Could not open config folder: ${message}`,
       });
-    }
-  }
-
-  async function registerBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await registerHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops was registered in Windows Default Apps. Now pick Hops for HTTP and HTTPS in Windows settings.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ kind: "error", text: `Could not register Hops: ${message}` });
-    } finally {
-      setIsRegistering(false);
-    }
-  }
-
-  async function unregisterBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await unregisterHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops registration keys were removed from your user profile.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not unregister Hops: ${message}`,
-      });
-    } finally {
-      setIsRegistering(false);
     }
   }
 
@@ -1788,84 +1551,6 @@ function App() {
       }
     } finally {
       setIsRouting(false);
-    }
-  }
-
-  // A user-visible check (the button) always hits the network; silent
-  // refreshes (opening the About tab) reuse the daily cached result.
-  async function refreshAbout(
-    showResultStatus = true,
-    force = showResultStatus,
-  ) {
-    setIsCheckingUpdate(true);
-    try {
-      const [nextAboutInfo, nextUpdateStatus] = await Promise.all([
-        getAppAboutInfo(),
-        checkForAppUpdate({ force }),
-      ]);
-      setAboutInfo(nextAboutInfo);
-      setUpdateStatus(nextUpdateStatus);
-
-      if (showResultStatus) {
-        setStatus({
-          kind: nextUpdateStatus.available ? "warning" : "success",
-          text: nextUpdateStatus.available
-            ? `Hops ${nextUpdateStatus.version} is available.`
-            : "Hops is up to date.",
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not check for updates: ${message}`,
-      });
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function refreshStatusBarUpdate() {
-    setIsCheckingUpdate(true);
-    try {
-      const nextUpdateStatus = await checkForAppUpdate();
-      setUpdateStatus(nextUpdateStatus);
-
-      // Remembered across settings windows, which are destroyed on close, so
-      // the same update is announced only once.
-      const updateVersionKey = nextUpdateStatus.version ?? "unknown";
-      if (nextUpdateStatus.available && !wasUpdateNotified(updateVersionKey)) {
-        markUpdateNotified(updateVersionKey);
-        try {
-          await notifyAppUpdateAvailable(nextUpdateStatus);
-        } catch (error) {
-          console.warn("Could not show update notification.", error);
-        }
-      }
-    } catch (error) {
-      console.warn("Could not check for updates.", error);
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function updateApp() {
-    setIsInstallingUpdate(true);
-    try {
-      const installed = await installAvailableUpdate();
-
-      if (!installed) {
-        setStatus({ kind: "success", text: "Hops is already up to date." });
-        await refreshAbout(false, true);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not install update: ${message}`,
-      });
-    } finally {
-      setIsInstallingUpdate(false);
     }
   }
 
