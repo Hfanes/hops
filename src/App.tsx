@@ -594,6 +594,80 @@ function App() {
     scheduleSettingsSave(nextConfig);
   }
 
+  // Validates a browser edit and saves it. Shared by the debounced save and
+  // the immediate flush (e.g. when an input loses focus).
+  async function saveBrowserChanges(browserId: string, baseConfig: AppConfig) {
+    try {
+      let configToSave = baseConfig;
+      const browser = configToSave.browsers.find(
+        (item) => item.id === browserId,
+      );
+      if (browser) {
+        const prepared = await validateManualBrowserConfig(browser, false, {
+          showAlert: true,
+          revertBrowserId: browserId,
+          allowConfirmationFlow: browser.source === "manual",
+        });
+        if (!prepared) {
+          return;
+        }
+
+        if (
+          browser.source === "manual" &&
+          prepared.validation.requiresConfirmation
+        ) {
+          setManualBrowserConfirmation({
+            mode: "edit",
+            browserId,
+            browser,
+            validation: prepared.validation,
+          });
+          setStatus({
+            kind: "warning",
+            text: prepared.validation.message,
+          });
+          return;
+        }
+
+        configToSave = {
+          ...configToSave,
+          browsers: configToSave.browsers.map((item) =>
+            item.id === browserId ? prepared.browser : item,
+          ),
+        };
+        configRef.current = configToSave;
+        setConfig(configToSave);
+      }
+
+      await persistConfig(configToSave, {
+        errorPrefix: "Could not save browser changes",
+        onSuccess: () => {
+          setFailedBrowserIds((current) => {
+            if (!current.has(browserId)) {
+              return current;
+            }
+            const next = cloneSet(current);
+            next.delete(browserId);
+            return next;
+          });
+        },
+        onError: () => {
+          setFailedBrowserIds((current) => {
+            const next = cloneSet(current);
+            next.add(browserId);
+            return next;
+          });
+        },
+      });
+    } finally {
+      setSavingBrowserIds((current) => {
+        const next = cloneSet(current);
+        next.delete(browserId);
+        return next;
+      });
+    }
+  }
+
   function scheduleBrowserSave(browserId: string, nextConfig: AppConfig) {
     const existingTimer = browserSaveTimersRef.current[browserId];
     if (existingTimer) {
@@ -627,87 +701,7 @@ function App() {
         return next;
       });
 
-      void (async () => {
-        try {
-          let configToSave = nextConfig;
-          const browser = configToSave.browsers.find(
-            (item) => item.id === browserId,
-          );
-          if (browser) {
-            const prepared = await validateManualBrowserConfig(browser, false, {
-              showAlert: true,
-              revertBrowserId: browserId,
-              allowConfirmationFlow: browser.source === "manual",
-            });
-            if (!prepared) {
-              return;
-            }
-
-            if (
-              browser.source === "manual" &&
-              prepared.validation.requiresConfirmation
-            ) {
-              setManualBrowserConfirmation({
-                mode: "edit",
-                browserId,
-                browser,
-                validation: prepared.validation,
-              });
-              setStatus({
-                kind: "warning",
-                text: prepared.validation.message,
-              });
-              return;
-            }
-
-            configToSave = {
-              ...configToSave,
-              browsers: configToSave.browsers.map((item) =>
-                item.id === browserId ? prepared.browser : item,
-              ),
-            };
-            configRef.current = configToSave;
-            setConfig(configToSave);
-          }
-
-          await persistConfig(configToSave, {
-            errorPrefix: "Could not save browser changes",
-            onSuccess: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                if (!current.has(browserId)) {
-                  return current;
-                }
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-            },
-            onError: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.add(browserId);
-                return next;
-              });
-            },
-          });
-        } finally {
-          setSavingBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
-        }
-      })();
+      void saveBrowserChanges(browserId, nextConfig);
     }, 500);
   }
 
@@ -731,77 +725,7 @@ function App() {
       return next;
     });
 
-    void (async () => {
-      try {
-        let configToSave = latestConfig;
-        const browser = configToSave.browsers.find(
-          (item) => item.id === browserId,
-        );
-        if (browser) {
-          const prepared = await validateManualBrowserConfig(browser, false, {
-            showAlert: true,
-            revertBrowserId: browserId,
-            allowConfirmationFlow: browser.source === "manual",
-          });
-          if (!prepared) {
-            return;
-          }
-
-          if (
-            browser.source === "manual" &&
-            prepared.validation.requiresConfirmation
-          ) {
-            setManualBrowserConfirmation({
-              mode: "edit",
-              browserId,
-              browser,
-              validation: prepared.validation,
-            });
-            setStatus({
-              kind: "warning",
-              text: prepared.validation.message,
-            });
-            return;
-          }
-
-          configToSave = {
-            ...configToSave,
-            browsers: configToSave.browsers.map((item) =>
-              item.id === browserId ? prepared.browser : item,
-            ),
-          };
-          configRef.current = configToSave;
-          setConfig(configToSave);
-        }
-
-        await persistConfig(configToSave, {
-          errorPrefix: "Could not save browser changes",
-          onSuccess: () => {
-            setFailedBrowserIds((current) => {
-              if (!current.has(browserId)) {
-                return current;
-              }
-              const next = cloneSet(current);
-              next.delete(browserId);
-              return next;
-            });
-          },
-          onError: () => {
-            setFailedBrowserIds((current) => {
-              const next = cloneSet(current);
-              next.add(browserId);
-              return next;
-            });
-          },
-        });
-      } finally {
-        setSavingBrowserIds((current) => {
-          const next = cloneSet(current);
-          next.delete(browserId);
-          return next;
-        });
-      }
-    })();
+    void saveBrowserChanges(browserId, latestConfig);
   }
 
   async function closeSettingsWindow() {
