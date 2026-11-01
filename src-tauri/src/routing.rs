@@ -6,11 +6,14 @@ use crate::models::{
 };
 #[cfg(target_os = "windows")]
 use crate::CREATE_NO_WINDOW;
-use globset::GlobBuilder;
+use globset::{GlobBuilder, GlobMatcher};
 use regex::Regex;
+use std::cell::OnceCell;
+use std::collections::HashMap;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use url::Url;
 
 pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
@@ -30,11 +33,14 @@ where
         return Ok(picker_decision(RouteReason::AlwaysShowPicker));
     }
 
-    // Normalize once: this is the exact URL the browser will receive.
+    // Normalize once: this is the exact URL the browser will receive. Both
+    // targets are built once per URL, not once per rule.
     let normalized_url = normalized_match_url(url);
+    let raw_target = MatchTarget::new(url);
+    let normalized_target = normalized_url.as_deref().map(MatchTarget::new);
 
     for rule in config.rules.iter().filter(|rule| rule.enabled) {
-        if !rule_matches_url(rule, url, normalized_url.as_deref()) {
+        if !rule_matches_targets(rule, &raw_target, normalized_target.as_ref()) {
             continue;
         }
 
@@ -127,29 +133,79 @@ fn normalized_match_url(url: &str) -> Option<String> {
 /// original is still tried so no rule that matched before stops matching,
 /// e.g. a regex written against non-ASCII characters that normalization
 /// percent-encodes.
+#[cfg(test)]
 pub(crate) fn rule_matches_url(rule: &RuleConfig, url: &str, normalized_url: Option<&str>) -> bool {
-    normalized_url.is_some_and(|normalized| rule_matches(rule, normalized))
-        || rule_matches(rule, url)
+    rule_matches_targets(
+        rule,
+        &MatchTarget::new(url),
+        normalized_url.map(MatchTarget::new).as_ref(),
+    )
 }
 
+fn rule_matches_targets(
+    rule: &RuleConfig,
+    raw: &MatchTarget<'_>,
+    normalized: Option<&MatchTarget<'_>>,
+) -> bool {
+    normalized.is_some_and(|normalized| rule_matches_target(rule, normalized))
+        || rule_matches_target(rule, raw)
+}
+
+#[cfg(test)]
 pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
+    rule_matches_target(rule, &MatchTarget::new(url))
+}
+
+/// A URL being matched, with the derived values rules need computed at most
+/// once per URL (and only if some rule asks for them).
+struct MatchTarget<'a> {
+    url: &'a str,
+    lowercase: OnceCell<String>,
+    hostname: OnceCell<Option<String>>,
+}
+
+impl<'a> MatchTarget<'a> {
+    fn new(url: &'a str) -> Self {
+        Self {
+            url,
+            lowercase: OnceCell::new(),
+            hostname: OnceCell::new(),
+        }
+    }
+
+    fn lowercase(&self) -> &str {
+        self.lowercase.get_or_init(|| self.url.to_lowercase())
+    }
+
+    fn hostname(&self) -> Option<&str> {
+        self.hostname
+            .get_or_init(|| extract_hostname(self.url))
+            .as_deref()
+    }
+}
+
+fn rule_matches_target(rule: &RuleConfig, target: &MatchTarget<'_>) -> bool {
     let pattern = rule.pattern.trim();
     if pattern.is_empty() {
         return false;
     }
 
+    let url = target.url;
     match rule.pattern_type {
-        RulePatternType::Hostname => extract_hostname(url)
+        RulePatternType::Hostname => target
+            .hostname()
             .is_some_and(|hostname| hostname.eq_ignore_ascii_case(&pattern.to_lowercase())),
         RulePatternType::HostnameSubdomains => {
             let domain = pattern.trim_start_matches("*.").to_lowercase();
-            extract_hostname(url).is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
+            target
+                .hostname()
+                .is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
         }
         // Scheme and host are case-insensitive on the web; the rest stays exact.
         RulePatternType::Prefix => {
             url.starts_with(pattern) || url.starts_with(&lowercase_scheme_and_host(pattern))
         }
-        RulePatternType::Contains => url.to_lowercase().contains(&pattern.to_lowercase()),
+        RulePatternType::Contains => target.lowercase().contains(&pattern.to_lowercase()),
         RulePatternType::FullUrl => {
             // Normalize the pattern the same way as the URL, so `https://Example.com`
             // and `https://example.com/` are the same address. Fall back to the
@@ -160,13 +216,81 @@ pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
                         .map(|parsed| parsed.to_string())
                         .unwrap_or_else(|_| lowercase_scheme_and_host(pattern))
         }
-        RulePatternType::Glob => GlobBuilder::new(pattern)
-            .case_insensitive(true)
-            .build()
-            .ok()
-            .is_some_and(|glob| glob.compile_matcher().is_match(url)),
-        RulePatternType::Regex => Regex::new(pattern).is_ok_and(|regex| regex.is_match(url)),
+        RulePatternType::Glob => compiled_glob(pattern).is_some_and(|glob| glob.is_match(url)),
+        RulePatternType::Regex => compiled_regex(pattern).is_some_and(|regex| regex.is_match(url)),
     }
+}
+
+/// Upper bound on cached patterns; editing rules over a long session cannot
+/// grow the cache without limit. Real configs stay far below it.
+const COMPILED_PATTERN_CACHE_LIMIT: usize = 256;
+
+/// Compiled glob and regex rule patterns, keyed by their trimmed source.
+///
+/// Compiling a regex costs far more than running it, and the same rules are
+/// checked for every incoming URL (twice, raw and normalized), so each pattern
+/// is compiled once. `None` caches invalid patterns, which never match.
+#[derive(Default)]
+struct CompiledPatterns {
+    globs: HashMap<String, Option<Arc<GlobMatcher>>>,
+    regexes: HashMap<String, Option<Arc<Regex>>>,
+}
+
+fn compiled_patterns() -> MutexGuard<'static, CompiledPatterns> {
+    static PATTERNS: OnceLock<Mutex<CompiledPatterns>> = OnceLock::new();
+    PATTERNS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Returns the cached value for `pattern`, compiling it (outside the lock) on
+/// first use.
+fn cached_pattern<T>(
+    pattern: &str,
+    map: fn(&mut CompiledPatterns) -> &mut HashMap<String, Option<Arc<T>>>,
+    compile: impl FnOnce(&str) -> Option<T>,
+) -> Option<Arc<T>> {
+    if let Some(cached) = map(&mut compiled_patterns()).get(pattern) {
+        return cached.clone();
+    }
+
+    let compiled = compile(pattern).map(Arc::new);
+    insert_bounded(
+        map(&mut compiled_patterns()),
+        pattern.to_string(),
+        compiled.clone(),
+    );
+    compiled
+}
+
+fn insert_bounded<V>(entries: &mut HashMap<String, V>, key: String, value: V) {
+    if entries.len() >= COMPILED_PATTERN_CACHE_LIMIT && !entries.contains_key(&key) {
+        entries.clear();
+    }
+    entries.insert(key, value);
+}
+
+fn compiled_glob(pattern: &str) -> Option<Arc<GlobMatcher>> {
+    cached_pattern(
+        pattern,
+        |patterns| &mut patterns.globs,
+        |pattern| {
+            GlobBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .ok()
+                .map(|glob| glob.compile_matcher())
+        },
+    )
+}
+
+fn compiled_regex(pattern: &str) -> Option<Arc<Regex>> {
+    cached_pattern(
+        pattern,
+        |patterns| &mut patterns.regexes,
+        |pattern| Regex::new(pattern).ok(),
+    )
 }
 
 /// Checks a regex rule pattern with the same engine and trimming that
@@ -545,6 +669,58 @@ mod tests {
             let parsed: RouteReason = serde_json::from_str(&json).expect("reason should parse");
             assert_eq!(parsed, reason);
         }
+    }
+
+    #[test]
+    fn compiled_patterns_are_reused_across_urls() {
+        let regex_a = compiled_regex(r"^https://cache-test\.example/reuse").expect("valid regex");
+        let regex_b = compiled_regex(r"^https://cache-test\.example/reuse").expect("valid regex");
+        assert!(Arc::ptr_eq(&regex_a, &regex_b));
+
+        let glob_a = compiled_glob("https://cache-test.*/reuse/*").expect("valid glob");
+        let glob_b = compiled_glob("https://cache-test.*/reuse/*").expect("valid glob");
+        assert!(Arc::ptr_eq(&glob_a, &glob_b));
+    }
+
+    #[test]
+    fn invalid_patterns_are_cached_and_never_match() {
+        assert!(compiled_regex("(cache-test-unclosed").is_none());
+        assert!(compiled_regex("(cache-test-unclosed").is_none());
+
+        let rule = test_rule(RulePatternType::Regex, "(cache-test-unclosed");
+        assert!(!rule_matches(
+            &rule,
+            "https://example.com/(cache-test-unclosed"
+        ));
+    }
+
+    #[test]
+    fn pattern_cache_is_bounded() {
+        let mut entries = HashMap::new();
+        for index in 0..COMPILED_PATTERN_CACHE_LIMIT {
+            insert_bounded(&mut entries, format!("pattern-{index}"), index);
+        }
+        assert_eq!(entries.len(), COMPILED_PATTERN_CACHE_LIMIT);
+
+        // Re-inserting a known key never clears the cache.
+        insert_bounded(&mut entries, "pattern-0".to_string(), 0);
+        assert_eq!(entries.len(), COMPILED_PATTERN_CACHE_LIMIT);
+
+        insert_bounded(&mut entries, "one-too-many".to_string(), 0);
+        assert_eq!(entries.len(), 1);
+        assert!(entries.contains_key("one-too-many"));
+    }
+
+    #[test]
+    fn match_target_computes_hostname_and_lowercase_lazily() {
+        let target = MatchTarget::new("https://GitHub.com/OpenAI");
+        assert!(target.hostname.get().is_none());
+        assert!(target.lowercase.get().is_none());
+
+        assert_eq!(target.hostname(), Some("github.com"));
+        assert_eq!(target.lowercase(), "https://github.com/openai");
+        assert!(target.hostname.get().is_some());
+        assert!(target.lowercase.get().is_some());
     }
 
     #[test]
