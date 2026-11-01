@@ -1,7 +1,17 @@
 name: Release
 
+# A release is a draft until it is published on GitHub, and the updater only
+# sees published releases, so nothing reaches users without that manual step.
+#
+# - Push to main: releases when the app version has no release or tag yet,
+#   i.e. merging a version bump into main creates the draft automatically.
+# - Push of a v*.*.* tag: releases that tag unless a release already exists
+#   (publishing a draft creates its tag, which must not rebuild it).
+# - Manual run: always releases the given tag (e.g. to retry a failed build).
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -13,12 +23,69 @@ on:
 permissions:
   contents: write
 
-env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+# One run at a time, so two quick pushes cannot both see "no release yet" and
+# create two drafts. Queued runs wait instead of being cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          requested_tag=""
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            requested_tag="$INPUT_TAG"
+          elif [[ "$REF_TYPE" == "tag" ]]; then
+            requested_tag="$REF_NAME"
+          fi
+
+          # Fails the run if the version declarations disagree, or if a
+          # requested tag does not match the app version.
+          version=$(bash .github/scripts/check-version.sh "$requested_tag")
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          should_release=true
+          reason="manual run"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
+            if grep -Fxq "$tag" <<< "$releases"; then
+              should_release=false
+              reason="a release for $tag already exists (draft or published)"
+            elif [[ "$REF_TYPE" == "branch" ]] && git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              should_release=false
+              reason="tag $tag already exists"
+            else
+              reason="no release for $tag yet"
+            fi
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "Release $tag: $should_release ($reason)" | tee -a "$GITHUB_STEP_SUMMARY"
+
   release-windows:
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
 
     steps:
       - name: Checkout
