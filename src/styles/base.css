@@ -157,3 +157,26 @@ select:focus {
 input {
   font-family: "Courier New", monospace;
 }
+
+/*
+ * Utilities that components still use. They came from Tailwind until it was
+ * removed (15682f9); these match Tailwind's definitions.
+ */
+
+/* Visually hidden but still read by screen readers (e.g. collapsed sidebar
+   labels). Without it the labels take up space and push the icons aside. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.pt-1 {
+  padding-top: 0.25rem;
+}
