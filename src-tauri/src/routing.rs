@@ -28,8 +28,11 @@ where
         return Ok(picker_decision("always_show_picker"));
     }
 
+    // Normalize once: this is the exact URL the browser will receive.
+    let normalized_url = normalized_match_url(url);
+
     for rule in config.rules.iter().filter(|rule| rule.enabled) {
-        if !rule_matches(rule, url) {
+        if !rule_matches_url(rule, url, normalized_url.as_deref()) {
             continue;
         }
 
@@ -102,6 +105,26 @@ where
     Ok(picker_decision("no_match"))
 }
 
+/// The URL as `open_url_with_browser` will launch it, when it differs from the
+/// trimmed input. `None` when the input is not a valid http(s) URL or is
+/// already in normalized form.
+fn normalized_match_url(url: &str) -> Option<String> {
+    let normalized = normalize_http_url(url).ok()?.to_string();
+    (normalized != url).then_some(normalized)
+}
+
+/// Matches a rule against the incoming URL and its normalized form.
+///
+/// The normalized form is what the browser receives (lowercase scheme and
+/// host, `/` for an empty path), so rules written against it must match. The
+/// original is still tried so no rule that matched before stops matching,
+/// e.g. a regex written against non-ASCII characters that normalization
+/// percent-encodes.
+pub(crate) fn rule_matches_url(rule: &RuleConfig, url: &str, normalized_url: Option<&str>) -> bool {
+    normalized_url.is_some_and(|normalized| rule_matches(rule, normalized))
+        || rule_matches(rule, url)
+}
+
 pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
     let pattern = rule.pattern.trim();
     if pattern.is_empty() {
@@ -115,9 +138,21 @@ pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
             let domain = pattern.trim_start_matches("*.").to_lowercase();
             extract_hostname(url).is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
         }
-        RulePatternType::Prefix => url.starts_with(pattern),
+        // Scheme and host are case-insensitive on the web; the rest stays exact.
+        RulePatternType::Prefix => {
+            url.starts_with(pattern) || url.starts_with(&lowercase_scheme_and_host(pattern))
+        }
         RulePatternType::Contains => url.to_lowercase().contains(&pattern.to_lowercase()),
-        RulePatternType::FullUrl => url == pattern,
+        RulePatternType::FullUrl => {
+            // Normalize the pattern the same way as the URL, so `https://Example.com`
+            // and `https://example.com/` are the same address. Fall back to the
+            // case-folded pattern when it is not a full URL on its own.
+            url == pattern
+                || url
+                    == normalize_http_url(pattern)
+                        .map(|parsed| parsed.to_string())
+                        .unwrap_or_else(|_| lowercase_scheme_and_host(pattern))
+        }
         RulePatternType::Glob => GlobBuilder::new(pattern)
             .case_insensitive(true)
             .build()
@@ -139,6 +174,23 @@ pub(crate) fn regex_pattern_error(pattern: &str) -> Option<String> {
         .find_map(|line| line.trim().strip_prefix("error: "))
         .unwrap_or_else(|| message.trim());
     Some(summary.to_string())
+}
+
+/// Lowercases the `scheme://host[:port]` part of a URL-like pattern and keeps
+/// the path, query, and fragment as written. Works on partial patterns such as
+/// `https://linear.app/my` that would not survive a full URL parse unchanged.
+fn lowercase_scheme_and_host(pattern: &str) -> String {
+    let Some(scheme_end) = pattern.find("://") else {
+        return pattern.to_string();
+    };
+    let authority_start = scheme_end + "://".len();
+    let authority_end = pattern[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(pattern.len(), |offset| authority_start + offset);
+
+    let mut result = pattern[..authority_end].to_lowercase();
+    result.push_str(&pattern[authority_end..]);
+    result
 }
 
 fn extract_hostname(url: &str) -> Option<String> {
@@ -370,6 +422,83 @@ mod tests {
         );
         assert!(rule_matches(&rule, "https://youtube.com/watch?v=abc"));
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
+    }
+
+    fn matches_incoming(rule: &RuleConfig, url: &str) -> bool {
+        rule_matches_url(rule, url, normalized_match_url(url).as_deref())
+    }
+
+    #[test]
+    fn full_url_matches_the_url_the_browser_receives() {
+        let rule = test_rule(RulePatternType::FullUrl, "https://example.com/");
+        assert!(matches_incoming(&rule, "https://example.com"));
+        assert!(matches_incoming(&rule, "HTTPS://Example.COM/"));
+
+        let rule = test_rule(RulePatternType::FullUrl, "https://Example.com");
+        assert!(matches_incoming(&rule, "https://example.com/"));
+    }
+
+    #[test]
+    fn full_url_keeps_path_and_query_exact() {
+        let rule = test_rule(RulePatternType::FullUrl, "https://app.example.com/a");
+        assert!(matches_incoming(&rule, "https://app.example.com/a"));
+        assert!(!matches_incoming(&rule, "https://app.example.com/A"));
+        assert!(!matches_incoming(&rule, "https://app.example.com/a?tab=1"));
+    }
+
+    #[test]
+    fn prefix_ignores_scheme_and_host_case_only() {
+        let rule = test_rule(RulePatternType::Prefix, "https://GitHub.com/openai");
+        assert!(matches_incoming(&rule, "https://github.com/openai/codex"));
+        assert!(matches_incoming(&rule, "HTTPS://GITHUB.COM/openai/codex"));
+        assert!(!matches_incoming(&rule, "https://github.com/OpenAI/codex"));
+        assert!(!matches_incoming(&rule, "https://github.com/other"));
+    }
+
+    #[test]
+    fn prefix_partial_pattern_still_matches() {
+        let rule = test_rule(RulePatternType::Prefix, "https://linear.app/my");
+        assert!(matches_incoming(
+            &rule,
+            "https://Linear.app/myteam/issue/ENG-1"
+        ));
+    }
+
+    #[test]
+    fn rules_written_against_the_raw_url_keep_matching() {
+        // Normalization percent-encodes the path; the raw form is still tried.
+        let rule = test_rule(RulePatternType::Regex, "/café$");
+        assert!(matches_incoming(&rule, "https://example.com/café"));
+
+        let rule = test_rule(RulePatternType::Contains, "café");
+        assert!(matches_incoming(&rule, "https://example.com/café"));
+    }
+
+    #[test]
+    fn lowercase_scheme_and_host_leaves_the_rest_untouched() {
+        assert_eq!(
+            lowercase_scheme_and_host("HTTPS://GitHub.com:8443/OpenAI?Q=1#Top"),
+            "https://github.com:8443/OpenAI?Q=1#Top"
+        );
+        assert_eq!(
+            lowercase_scheme_and_host("https://Linear.App"),
+            "https://linear.app"
+        );
+        assert_eq!(lowercase_scheme_and_host("Figma"), "Figma");
+    }
+
+    #[test]
+    fn resolve_route_matches_rule_against_normalized_url() {
+        let browser = manual_browser("chrome", "Chrome");
+        let mut rule = test_rule(RulePatternType::FullUrl, "https://example.com/");
+        rule.browser_id = browser.id.clone();
+        let mut config = test_app_config(vec![browser]);
+        config.rules.push(rule);
+
+        let (decision, _) = resolve_route_with_empty_running_set(&config, "https://EXAMPLE.com");
+
+        assert_eq!(decision.matched_rule_id.as_deref(), Some("test"));
+        assert_eq!(decision.reason, "rule_browser_not_running");
     }
 
     #[test]
