@@ -1,4 +1,4 @@
-use crate::browsers::RunningProcessSnapshot;
+use crate::browsers::{current_running_processes, RunningProcessSnapshot};
 use crate::config::load_or_init_config;
 use crate::models::{
     AppConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction, RouteDecision,
@@ -552,7 +552,7 @@ fn build_picker_session(
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<PickerSession, String> {
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     build_picker_session_with_running_processes(
         config,
         url,
@@ -791,7 +791,7 @@ pub(crate) fn handle_incoming_url(
         || load_or_init_config(app, false),
     )?;
     let force_picker = force_picker_hint || detected_picker_trigger;
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     let decision = resolve_incoming_url_decision_with_running_processes(
         &config,
         url,

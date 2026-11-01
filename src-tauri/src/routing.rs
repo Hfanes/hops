@@ -1,4 +1,6 @@
-use crate::browsers::{validate_browser_for_launch, RunningProcessSnapshot};
+use crate::browsers::{
+    current_running_processes, validate_browser_for_launch, RunningProcessSnapshot,
+};
 use crate::models::{
     AppConfig, BrowserConfig, RouteAction, RouteDecision, RuleConfig, RulePatternType,
 };
@@ -12,7 +14,7 @@ use std::process::{Command, Stdio};
 use url::Url;
 
 pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     resolve_route_with_running_processes(config, url, &mut running)
 }
 
