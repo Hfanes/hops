@@ -433,6 +433,9 @@ fn picker_window_layout(
 fn picker_debug_log(message: &str) {
     #[cfg(debug_assertions)]
     eprintln!("Hops picker: {message}");
+    // Release builds compile the log out; keep the parameter "used".
+    #[cfg(not(debug_assertions))]
+    let _ = message;
 }
 
 fn next_picker_idle_destroy_token(state: &PickerState) -> Result<u64, String> {
