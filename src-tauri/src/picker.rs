@@ -2,6 +2,7 @@ use crate::browsers::{current_running_processes, RunningProcessSnapshot};
 use crate::config::load_or_init_config;
 use crate::models::{
     AppConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction, RouteDecision,
+    RouteReason,
 };
 use crate::routing::{
     normalize_http_url, open_url_with_browser, picker_decision,
@@ -548,7 +549,7 @@ fn build_picker_session(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<PickerSession, String> {
@@ -568,7 +569,7 @@ fn build_picker_session_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
     running: &mut RunningProcessSnapshot<F>,
@@ -601,7 +602,7 @@ where
 
     Ok(PickerSession {
         url: normalized_url,
-        reason: reason.to_string(),
+        reason,
         source,
         preferred_browser_id: preferred_browser_id.map(str::to_string),
         preferred_private_mode,
@@ -655,7 +656,7 @@ where
     F: FnMut() -> std::collections::HashSet<String>,
 {
     if force_picker {
-        return Ok(picker_decision("ctrl_shift_click"));
+        return Ok(picker_decision(RouteReason::CtrlShiftClick));
     }
 
     resolve_route_with_running_processes(config, url, running)
@@ -667,7 +668,7 @@ pub(crate) fn show_picker_window(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<(), String> {
@@ -690,7 +691,7 @@ fn show_picker_window_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
     running: &mut RunningProcessSnapshot<F>,
@@ -799,14 +800,15 @@ pub(crate) fn handle_incoming_url(
         &mut running,
     )?;
 
-    if decision.action == RouteAction::ShowPicker && decision.reason == "ctrl_shift_click" {
+    if decision.action == RouteAction::ShowPicker && decision.reason == RouteReason::CtrlShiftClick
+    {
         show_picker_window(
             app,
             state,
             &config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
         )?;
@@ -825,7 +827,7 @@ pub(crate) fn handle_incoming_url(
             &config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
             &mut running,
@@ -922,7 +924,7 @@ mod tests {
             config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
             running,
@@ -1034,7 +1036,7 @@ mod tests {
         .expect("route should resolve");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "ctrl_shift_click");
+        assert_eq!(decision.reason, RouteReason::CtrlShiftClick);
         assert_eq!(scan_count.get(), 0);
     }
 
@@ -1147,7 +1149,7 @@ mod tests {
         .expect("route should resolve");
 
         assert_eq!(decision.action, RouteAction::OpenBrowser);
-        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(decision.reason, RouteReason::DefaultBrowser);
         assert_eq!(scan_count.get(), 0);
     }
 
@@ -1169,7 +1171,7 @@ mod tests {
         )
         .expect("route should resolve");
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
         assert_eq!(scan_count.get(), 1);
 
         let session = build_route_picker_session(
@@ -1196,7 +1198,7 @@ mod tests {
             resolve_route_with_running_processes(&config, "https://example.com", &mut running)
                 .expect("route should resolve");
 
-        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(decision.reason, RouteReason::AlwaysShowPicker);
         assert_eq!(scan_count.get(), 0);
 
         let session =
@@ -1221,7 +1223,7 @@ mod tests {
             resolve_route_with_running_processes(&config, "https://example.com", &mut running)
                 .expect("route should resolve");
 
-        assert_eq!(decision.reason, "no_match");
+        assert_eq!(decision.reason, RouteReason::NoMatch);
         assert_eq!(scan_count.get(), 0);
 
         let session =
@@ -1248,7 +1250,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Route,
-            "test",
+            RouteReason::NoMatch,
             Some(preferred.id.as_str()),
             false,
             &mut running,
@@ -1280,7 +1282,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,
@@ -1311,7 +1313,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,
@@ -1339,7 +1341,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,

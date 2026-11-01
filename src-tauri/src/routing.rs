@@ -2,7 +2,7 @@ use crate::browsers::{
     current_running_processes, validate_browser_for_launch, RunningProcessSnapshot,
 };
 use crate::models::{
-    AppConfig, BrowserConfig, RouteAction, RouteDecision, RuleConfig, RulePatternType,
+    AppConfig, BrowserConfig, RouteAction, RouteDecision, RouteReason, RuleConfig, RulePatternType,
 };
 #[cfg(target_os = "windows")]
 use crate::CREATE_NO_WINDOW;
@@ -27,7 +27,7 @@ where
     F: FnMut() -> std::collections::HashSet<String>,
 {
     if config.always_show_picker {
-        return Ok(picker_decision("always_show_picker"));
+        return Ok(picker_decision(RouteReason::AlwaysShowPicker));
     }
 
     // Normalize once: this is the exact URL the browser will receive.
@@ -52,7 +52,7 @@ where
                 browser,
                 rule.private_mode,
                 Some(rule.id.clone()),
-                "rule_match_running",
+                RouteReason::RuleMatchRunning,
             ));
         }
 
@@ -67,7 +67,7 @@ where
                         default_browser,
                         rule.private_mode,
                         Some(rule.id.clone()),
-                        "rule_browser_not_running_use_default",
+                        RouteReason::RuleBrowserNotRunningUseDefault,
                     ));
                 }
             }
@@ -76,7 +76,7 @@ where
                 browser,
                 rule.private_mode,
                 Some(rule.id.clone()),
-                "rule_browser_not_running_no_default",
+                RouteReason::RuleBrowserNotRunningNoDefault,
             ));
         }
 
@@ -84,7 +84,7 @@ where
             browser,
             rule.private_mode,
             Some(rule.id.clone()),
-            "rule_browser_not_running",
+            RouteReason::RuleBrowserNotRunning,
         ));
     }
 
@@ -94,17 +94,22 @@ where
             .iter()
             .find(|browser| &browser.id == default_browser_id && !browser.is_hidden)
         else {
-            return Ok(picker_decision("default_browser_missing"));
+            return Ok(picker_decision(RouteReason::DefaultBrowserMissing));
         };
 
         if config.use_defaults_when_not_running || running.is_browser_running(browser) {
-            return Ok(open_decision(browser, false, None, "default_browser"));
+            return Ok(open_decision(
+                browser,
+                false,
+                None,
+                RouteReason::DefaultBrowser,
+            ));
         }
 
-        return Ok(picker_decision("default_browser_not_running"));
+        return Ok(picker_decision(RouteReason::DefaultBrowserNotRunning));
     }
 
-    Ok(picker_decision("no_match"))
+    Ok(picker_decision(RouteReason::NoMatch))
 }
 
 /// The URL as `open_url_with_browser` will launch it, when it differs from the
@@ -237,11 +242,11 @@ fn open_decision(
     browser: &BrowserConfig,
     private_mode: bool,
     matched_rule_id: Option<String>,
-    reason: &str,
+    reason: RouteReason,
 ) -> RouteDecision {
     RouteDecision {
         action: RouteAction::OpenBrowser,
-        reason: reason.to_string(),
+        reason,
         browser_id: Some(browser.id.clone()),
         browser_name: Some(browser.name.clone()),
         private_mode,
@@ -249,10 +254,10 @@ fn open_decision(
     }
 }
 
-pub(crate) fn picker_decision(reason: &str) -> RouteDecision {
+pub(crate) fn picker_decision(reason: RouteReason) -> RouteDecision {
     RouteDecision {
         action: RouteAction::ShowPicker,
-        reason: reason.to_string(),
+        reason,
         browser_id: None,
         browser_name: None,
         private_mode: false,
@@ -264,11 +269,11 @@ fn picker_decision_for_browser(
     browser: &BrowserConfig,
     private_mode: bool,
     matched_rule_id: Option<String>,
-    reason: &str,
+    reason: RouteReason,
 ) -> RouteDecision {
     RouteDecision {
         action: RouteAction::ShowPicker,
-        reason: reason.to_string(),
+        reason,
         browser_id: Some(browser.id.clone()),
         browser_name: Some(browser.name.clone()),
         private_mode,
@@ -385,7 +390,7 @@ mod tests {
             resolve_route_with_empty_running_set(&config, "https://github.com/openai/codex");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(decision.reason, RouteReason::AlwaysShowPicker);
         assert_eq!(scan_count, 0);
     }
 
@@ -500,7 +505,46 @@ mod tests {
         let (decision, _) = resolve_route_with_empty_running_set(&config, "https://EXAMPLE.com");
 
         assert_eq!(decision.matched_rule_id.as_deref(), Some("test"));
-        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
+    }
+
+    #[test]
+    fn route_reasons_serialize_to_the_strings_the_frontend_expects() {
+        let expected = [
+            (RouteReason::AlwaysShowPicker, "always_show_picker"),
+            (RouteReason::RuleMatchRunning, "rule_match_running"),
+            (
+                RouteReason::RuleBrowserNotRunningUseDefault,
+                "rule_browser_not_running_use_default",
+            ),
+            (
+                RouteReason::RuleBrowserNotRunningNoDefault,
+                "rule_browser_not_running_no_default",
+            ),
+            (
+                RouteReason::RuleBrowserNotRunning,
+                "rule_browser_not_running",
+            ),
+            (
+                RouteReason::DefaultBrowserMissing,
+                "default_browser_missing",
+            ),
+            (RouteReason::DefaultBrowser, "default_browser"),
+            (
+                RouteReason::DefaultBrowserNotRunning,
+                "default_browser_not_running",
+            ),
+            (RouteReason::NoMatch, "no_match"),
+            (RouteReason::CtrlShiftClick, "ctrl_shift_click"),
+            (RouteReason::ManualOpen, "manual_open"),
+        ];
+
+        for (reason, text) in expected {
+            let json = serde_json::to_string(&reason).expect("reason should serialize");
+            assert_eq!(json, format!("\"{text}\""));
+            let parsed: RouteReason = serde_json::from_str(&json).expect("reason should parse");
+            assert_eq!(parsed, reason);
+        }
     }
 
     #[test]
@@ -531,7 +575,7 @@ mod tests {
         assert_eq!(decision.action, RouteAction::ShowPicker);
         assert_eq!(decision.browser_id.as_deref(), Some(browser.id.as_str()));
         assert!(decision.private_mode);
-        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
         assert_eq!(scan_count, 1);
     }
 
@@ -557,7 +601,10 @@ mod tests {
             Some(default_browser.id.as_str())
         );
         assert!(decision.private_mode);
-        assert_eq!(decision.reason, "rule_browser_not_running_use_default");
+        assert_eq!(
+            decision.reason,
+            RouteReason::RuleBrowserNotRunningUseDefault
+        );
         assert_eq!(scan_count, 1);
     }
 
@@ -573,7 +620,7 @@ mod tests {
 
         assert_eq!(decision.action, RouteAction::OpenBrowser);
         assert_eq!(decision.browser_id.as_deref(), Some("chrome"));
-        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(decision.reason, RouteReason::DefaultBrowser);
         assert_eq!(scan_count, 0);
     }
 
@@ -590,7 +637,7 @@ mod tests {
             resolve_route_with_empty_running_set(&config, "https://example.com");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "no_match");
+        assert_eq!(decision.reason, RouteReason::NoMatch);
         assert_eq!(scan_count, 0);
     }
 }
