@@ -226,3 +226,5 @@ export function useConfigStore({
     updateThemePreference,
   };
 }
+
+export type ConfigStore = ReturnType<typeof useConfigStore>;
