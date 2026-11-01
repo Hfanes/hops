@@ -55,8 +55,8 @@ import {
   EMPTY_STATUS,
   rejectAfter,
   ROUTE_OPEN_TIMEOUT_MS,
-  settingsDraftFromConfig,
 } from "./lib/appTypes";
+import { useConfigStore } from "./hooks/useConfigStore";
 import { useDocumentTheme } from "./hooks/useDocumentTheme";
 import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
 import type {
@@ -69,21 +69,16 @@ import type {
   RuleDraft,
   RuleConfig,
   SettingsActionPanel,
-  SettingsDraft,
   StatusState,
   TabId,
-  ThemePreference,
 } from "./types";
 import "./styles/App.css";
 
 function App() {
-  const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [theme, setTheme] = useState<ThemePreference>("light");
   const [status, setStatus] = useState<StatusState>(EMPTY_STATUS);
   const [isLoading, setIsLoading] = useState(true);
-  const [saveActivityCount, setSaveActivityCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
   const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
@@ -94,9 +89,6 @@ function App() {
   const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
   const [isCheckingOnboardingDefaults, setIsCheckingOnboardingDefaults] =
     useState(false);
-  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(
-    null,
-  );
   const [dirtyRuleIds, setDirtyRuleIds] = useState<Set<string>>(new Set());
   const [savingRuleIds, setSavingRuleIds] = useState<Set<string>>(new Set());
   const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(
@@ -141,16 +133,27 @@ function App() {
     null,
   );
   const [isRouting, setIsRouting] = useState(false);
-  const isSaving = saveActivityCount > 0;
-  const configRef = useRef<AppConfig | null>(null);
-  const persistedConfigRef = useRef<AppConfig | null>(null);
-  const settingsDraftRef = useRef<SettingsDraft | null>(null);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const browserSaveTimersRef = useRef<Record<string, number>>({});
-  const settingsSaveTimerRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
 
+  const {
+    config,
+    configRef,
+    persistedConfigRef,
+    theme,
+    settingsDraft,
+    isSaving,
+    setCurrentConfig,
+    applyConfigChange,
+    applyLoadedConfig,
+    persistConfig,
+    scheduleSettingsSave,
+    cancelScheduledSettingsSave,
+    waitForQueuedSaves,
+    updateSettingsDraft,
+    updateThemePreference,
+  } = useConfigStore({ setStatus });
   const {
     aboutInfo,
     setAboutInfo,
@@ -179,14 +182,6 @@ function App() {
     configRef,
   });
   const regexErrors = useRegexErrors(config);
-
-  useEffect(() => {
-    configRef.current = config;
-  }, [config]);
-
-  useEffect(() => {
-    settingsDraftRef.current = settingsDraft;
-  }, [settingsDraft]);
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((current) => !current);
@@ -248,9 +243,6 @@ function App() {
       for (const timerId of Object.values(browserSaveTimersRef.current)) {
         window.clearTimeout(timerId);
       }
-      if (settingsSaveTimerRef.current !== null) {
-        window.clearTimeout(settingsSaveTimerRef.current);
-      }
     };
   }, []);
 
@@ -291,29 +283,6 @@ function App() {
       unlistenClose?.();
     };
   }, []);
-
-  function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return null;
-    }
-
-    const nextConfig = transform(currentConfig);
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-    return nextConfig;
-  }
-
-  function applyLoadedConfig(nextConfig: AppConfig) {
-    const nextSettingsDraft = settingsDraftFromConfig(nextConfig);
-
-    configRef.current = nextConfig;
-    persistedConfigRef.current = nextConfig;
-    settingsDraftRef.current = nextSettingsDraft;
-    setConfig(nextConfig);
-    setTheme(nextConfig.themePreference);
-    setSettingsDraft(nextSettingsDraft);
-  }
 
   function normalizeBrowserPath(path: string) {
     return path.trim().replace(/\//g, "\\").toLowerCase();
@@ -375,8 +344,7 @@ function App() {
         browser.id === browserId ? persistedBrowser : browser,
       ),
     };
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
+    setCurrentConfig(nextConfig);
   }
 
   function applyManualBrowserValidation(
@@ -474,113 +442,6 @@ function App() {
     };
   }
 
-  function updateThemePreference(nextTheme: ThemePreference) {
-    setTheme(nextTheme);
-    setSettingsDraft((current) => {
-      const nextDraft = current
-        ? {
-            ...current,
-            themePreference: nextTheme,
-          }
-        : current;
-      settingsDraftRef.current = nextDraft;
-      return nextDraft;
-    });
-
-    const currentConfig = configRef.current;
-    if (!currentConfig || currentConfig.themePreference === nextTheme) {
-      return;
-    }
-
-    const nextConfig: AppConfig = {
-      ...currentConfig,
-      themePreference: nextTheme,
-    };
-
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-    void persistConfig(nextConfig, {
-      errorPrefix: "Could not save theme preference",
-      applySavedConfig: false,
-    });
-  }
-
-  function persistConfig(
-    nextConfig: AppConfig,
-    options?: {
-      successText?: string;
-      errorPrefix?: string;
-      onSuccess?: (saved: AppConfig) => void;
-      onError?: () => void;
-      onSettled?: () => void;
-      applySavedConfig?: boolean;
-    },
-  ) {
-    setSaveActivityCount((count) => count + 1);
-
-    const runSave = async () => {
-      try {
-        const saved = await saveConfig(nextConfig);
-        if (options?.applySavedConfig ?? true) {
-          applyLoadedConfig(saved);
-        }
-        options?.onSuccess?.(saved);
-        if (options?.successText) {
-          setStatus({ kind: "success", text: options.successText });
-        }
-      } catch (error) {
-        options?.onError?.();
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus({
-          kind: "error",
-          text: `${options?.errorPrefix ?? "Save failed"}: ${message}`,
-        });
-        throw error;
-      } finally {
-        setSaveActivityCount((count) => Math.max(0, count - 1));
-        options?.onSettled?.();
-      }
-    };
-
-    const queued = saveQueueRef.current.then(runSave, runSave);
-    saveQueueRef.current = queued.catch(() => undefined);
-    return queued;
-  }
-
-  function scheduleSettingsSave(nextConfig: AppConfig) {
-    if (settingsSaveTimerRef.current !== null) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-    }
-
-    settingsSaveTimerRef.current = window.setTimeout(() => {
-      settingsSaveTimerRef.current = null;
-      void persistConfig(nextConfig, {
-        errorPrefix: "Could not save settings",
-        applySavedConfig: false,
-      });
-    }, 350);
-  }
-
-  function updateSettingsDraft(
-    transform: (current: SettingsDraft) => SettingsDraft,
-  ) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return;
-    }
-
-    const currentDraft =
-      settingsDraftRef.current ?? settingsDraftFromConfig(currentConfig);
-    const nextDraft = transform(currentDraft);
-    const nextConfig = applySettingsDraft(currentConfig, nextDraft);
-
-    configRef.current = nextConfig;
-    settingsDraftRef.current = nextDraft;
-    setConfig(nextConfig);
-    setSettingsDraft(nextDraft);
-    scheduleSettingsSave(nextConfig);
-  }
-
   // Validates a browser edit and saves it. Shared by the debounced save and
   // the immediate flush (e.g. when an input loses focus).
   async function saveBrowserChanges(browserId: string, baseConfig: AppConfig) {
@@ -622,8 +483,7 @@ function App() {
             item.id === browserId ? prepared.browser : item,
           ),
         };
-        configRef.current = configToSave;
-        setConfig(configToSave);
+        setCurrentConfig(configToSave);
       }
 
       await persistConfig(configToSave, {
@@ -721,14 +581,9 @@ function App() {
     }
 
     isClosingRef.current = true;
-    const hasPendingSettingsSave = settingsSaveTimerRef.current !== null;
+    const hasPendingSettingsSave = cancelScheduledSettingsSave();
     const hasPendingBrowserSaves =
       Object.keys(browserSaveTimersRef.current).length > 0;
-
-    if (settingsSaveTimerRef.current !== null) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-      settingsSaveTimerRef.current = null;
-    }
 
     for (const timerId of Object.values(browserSaveTimersRef.current)) {
       window.clearTimeout(timerId);
@@ -747,7 +602,7 @@ function App() {
         });
       }
 
-      await saveQueueRef.current;
+      await waitForQueuedSaves();
       await getCurrentWindow().destroy();
     } catch {
       isClosingRef.current = false;
@@ -1024,8 +879,7 @@ function App() {
           browser.id === browserId ? prepared.browser : browser,
         ),
       };
-      configRef.current = nextConfig;
-      setConfig(nextConfig);
+      setCurrentConfig(nextConfig);
       await persistConfig(nextConfig, {
         successText: `Updated manual browser "${prepared.browser.name}".`,
         errorPrefix: "Could not save browser changes",
@@ -1246,8 +1100,7 @@ function App() {
       rules: [...config.rules, rule],
     };
 
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
+    setCurrentConfig(nextConfig);
     try {
       await persistConfig(nextConfig, {
         successText: "Rule added and saved.",
@@ -1256,8 +1109,7 @@ function App() {
       setRuleDraft((current) => ({ ...current, pattern: "" }));
       setFormModal(null);
     } catch {
-      setConfig(config);
-      configRef.current = config;
+      setCurrentConfig(config);
     }
   }
 
