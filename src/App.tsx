@@ -3,6 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
   checkForAppUpdate,
+  markUpdateNotified,
+  wasUpdateNotified,
   getBrowserRegistrationStatus,
   getAppAboutInfo,
   getConfigFilePath,
@@ -182,7 +184,6 @@ function App() {
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const browserSaveTimersRef = useRef<Record<string, number>>({});
   const settingsSaveTimerRef = useRef<number | null>(null);
-  const notifiedUpdateVersionsRef = useRef<Set<string>>(new Set());
   const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
   const isRunningStateRefreshInFlightRef = useRef(false);
@@ -1790,12 +1791,17 @@ function App() {
     }
   }
 
-  async function refreshAbout(showResultStatus = true) {
+  // A user-visible check (the button) always hits the network; silent
+  // refreshes (opening the About tab) reuse the daily cached result.
+  async function refreshAbout(
+    showResultStatus = true,
+    force = showResultStatus,
+  ) {
     setIsCheckingUpdate(true);
     try {
       const [nextAboutInfo, nextUpdateStatus] = await Promise.all([
         getAppAboutInfo(),
-        checkForAppUpdate(),
+        checkForAppUpdate({ force }),
       ]);
       setAboutInfo(nextAboutInfo);
       setUpdateStatus(nextUpdateStatus);
@@ -1825,12 +1831,11 @@ function App() {
       const nextUpdateStatus = await checkForAppUpdate();
       setUpdateStatus(nextUpdateStatus);
 
+      // Remembered across settings windows, which are destroyed on close, so
+      // the same update is announced only once.
       const updateVersionKey = nextUpdateStatus.version ?? "unknown";
-      if (
-        nextUpdateStatus.available &&
-        !notifiedUpdateVersionsRef.current.has(updateVersionKey)
-      ) {
-        notifiedUpdateVersionsRef.current.add(updateVersionKey);
+      if (nextUpdateStatus.available && !wasUpdateNotified(updateVersionKey)) {
+        markUpdateNotified(updateVersionKey);
         try {
           await notifyAppUpdateAvailable(nextUpdateStatus);
         } catch (error) {
@@ -1851,7 +1856,7 @@ function App() {
 
       if (!installed) {
         setStatus({ kind: "success", text: "Hops is already up to date." });
-        await refreshAbout(false);
+        await refreshAbout(false, true);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
