@@ -4,8 +4,6 @@ use crate::models::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-#[cfg(not(target_os = "windows"))]
-use std::process::{Command, Stdio};
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -1065,30 +1063,10 @@ fn process_entry_name_matches(exe_file: &[u16], wanted_names: &HashSet<String>) 
         .is_ok_and(|name| wanted_names.contains(&name.to_lowercase()))
 }
 
+/// Hops only supports Windows; elsewhere no browser is reported as running.
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn running_processes(_browsers: &[BrowserConfig]) -> Result<HashSet<String>, String> {
-    let mut command = Command::new("tasklist");
-    command.stdin(Stdio::null()).stderr(Stdio::null());
-
-    let output = command
-        .args(["/FO", "CSV", "/NH"])
-        .output()
-        .map_err(|error| format!("Could not run tasklist to detect running browsers: {error}"))?;
-
-    if !output.status.success() {
-        return Err("tasklist failed while checking running browsers.".to_string());
-    }
-
-    let mut names = HashSet::new();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        if let Some(name) = parse_first_csv_column(line) {
-            names.insert(name.to_lowercase());
-        }
-    }
-
-    Ok(names)
+    Ok(HashSet::new())
 }
 
 #[cfg(target_os = "windows")]
@@ -1111,24 +1089,6 @@ fn query_process_image_path(process_id: u32, buffer: &mut [u16]) -> Option<Strin
     }
 
     String::from_utf16(&buffer[..length as usize]).ok()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn parse_first_csv_column(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(stripped) = trimmed.strip_prefix('"') {
-        let end = stripped.find('"')?;
-        return Some(stripped[..end].to_string());
-    }
-
-    trimmed
-        .split(',')
-        .next()
-        .map(|value| value.trim_matches('"').to_string())
 }
 
 pub(crate) fn is_browser_running(
