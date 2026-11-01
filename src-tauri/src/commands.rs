@@ -9,7 +9,7 @@ use crate::config::{
 use crate::models::{
     AppConfig, BrowserRegistrationStatus, ManualBrowserValidationRequest,
     ManualBrowserValidationResult, OpenUrlRequest, PickerLaunchSource, PickerSession, RouteAction,
-    RouteDecision,
+    RouteDecision, RouteReason,
 };
 use crate::picker::{
     hide_picker_window_internal, show_picker_window, show_settings_window, PickerState,
@@ -202,7 +202,7 @@ pub(crate) fn show_picker_for_url(
         &config,
         &url,
         PickerLaunchSource::Manual,
-        "manual_open",
+        RouteReason::ManualOpen,
         preferred_browser_id.as_deref(),
         preferred_private_mode.unwrap_or(false),
     )

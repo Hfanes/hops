@@ -15,6 +15,19 @@ export type RulePatternType =
   | "regex";
 
 export type RouteAction = "open_browser" | "show_picker";
+/** Mirrors the backend `RouteReason` enum (src-tauri/src/models.rs). */
+export type RouteReason =
+  | "always_show_picker"
+  | "rule_match_running"
+  | "rule_browser_not_running_use_default"
+  | "rule_browser_not_running_no_default"
+  | "rule_browser_not_running"
+  | "default_browser_missing"
+  | "default_browser"
+  | "default_browser_not_running"
+  | "no_match"
+  | "ctrl_shift_click"
+  | "manual_open";
 export type ThemePreference = "light" | "dark";
 
 export interface BrowserConfig {
@@ -69,7 +82,7 @@ export interface AppConfig {
 
 export interface RouteDecision {
   action: RouteAction;
-  reason: string;
+  reason: RouteReason;
   browserId: string | null;
   browserName: string | null;
   privateMode: boolean;
@@ -104,7 +117,7 @@ export interface PickerBrowserEntry {
 
 export interface PickerSession {
   url: string;
-  reason: string;
+  reason: RouteReason;
   source: PickerLaunchSource;
   preferredBrowserId: string | null;
   preferredPrivateMode: boolean;
