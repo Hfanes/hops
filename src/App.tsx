@@ -18,8 +18,14 @@ import {
   validateRegexPatterns,
 } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
-import { ModalShell } from "./components/common/ModalShell";
-import { PatternTypePicker } from "./components/common/PatternTypePicker";
+import {
+  DeleteConfirmModal,
+  type DeleteConfirmation,
+} from "./components/common/DeleteConfirmModal";
+import {
+  FeedbackModal,
+  type FeedbackMessage,
+} from "./components/common/FeedbackModal";
 import { StatusBanner } from "./components/common/StatusBanner";
 import { ScrollTopButton } from "./components/layout/ScrollTopButton";
 import { SidebarNav } from "./components/layout/SidebarNav";
@@ -27,10 +33,16 @@ import { BottomStatusBar } from "./components/layout/BottomStatusBar";
 import { Topbar } from "./components/layout/Topbar";
 import { AboutPanel } from "./features/about/AboutPanel";
 import { useAppUpdates } from "./features/about/useAppUpdates";
+import { AddBrowserModal } from "./features/browsers/AddBrowserModal";
 import { BrowsersTab } from "./features/browsers/BrowsersTab";
+import {
+  ManualBrowserConfirmModal,
+  type ManualBrowserConfirmation,
+} from "./features/browsers/ManualBrowserConfirmModal";
 import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { RouterTester } from "./features/router/RouterTester";
+import { AddRuleModal } from "./features/rules/AddRuleModal";
 import { RulesTab } from "./features/rules/RulesTab";
 import { useRegexErrors } from "./features/rules/useRegexErrors";
 import { SettingsTab } from "./features/settings/SettingsTab";
@@ -105,33 +117,13 @@ function App() {
     path: "",
     privateFlag: "",
   });
-  const [manualBrowserConfirmation, setManualBrowserConfirmation] = useState<{
-    mode: "add" | "edit";
-    browserId: string | null;
-    browser: BrowserConfig;
-    validation: ManualBrowserValidationResult;
-  } | null>(null);
-  const [feedbackModal, setFeedbackModal] = useState<{
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  } | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<
-    | {
-        kind: "manual-browser";
-        browserId: string;
-        browserName: string;
-        affectedRuleCount: number;
-      }
-    | {
-        kind: "rule";
-        ruleId: string;
-        ruleLabel: string;
-        pattern: string;
-      }
-    | null
-  >(null);
+  const [manualBrowserConfirmation, setManualBrowserConfirmation] =
+    useState<ManualBrowserConfirmation | null>(null);
+  const [feedbackModal, setFeedbackModal] = useState<FeedbackMessage | null>(
+    null,
+  );
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DeleteConfirmation | null>(null);
   const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
     useState(false);
 
@@ -347,12 +339,7 @@ function App() {
     );
   }
 
-  function showFeedbackModal(options: {
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  }) {
+  function showFeedbackModal(options: FeedbackMessage) {
     setFeedbackModal(options);
   }
 
@@ -1523,251 +1510,46 @@ function App() {
 
   const activeFormModal =
     formModal === "manual-browser" ? (
-      <ModalShell
-        title={<h3 id="manual-browser-title">Add manual browser</h3>}
-        titleId="manual-browser-title"
+      <AddBrowserModal
+        browserDraft={browserDraft}
+        isSaving={isSaving}
+        onSetBrowserDraft={setBrowserDraft}
+        onAdd={() => void addManualBrowser()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Name
-          <input
-            value={browserDraft.name}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                name: value,
-              }));
-            }}
-            placeholder="Portable Chrome"
-          />
-        </label>
-        <label>
-          Executable path
-          <input
-            value={browserDraft.path}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                path: value,
-              }));
-            }}
-            placeholder="C:\\Tools\\Chrome\\chrome.exe"
-          />
-        </label>
-        <label>
-          Private mode flag
-          <input
-            value={browserDraft.privateFlag}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                privateFlag: value,
-              }));
-            }}
-            placeholder="--incognito"
-          />
-        </label>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addManualBrowser()}
-            disabled={isSaving}
-          >
-            Add browser
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : formModal === "rule" ? (
-      <ModalShell
-        title={
-          <div>
-            <h3 id="rule-modal-title">Add rule</h3>
-            <p className="setting-help">New rules are created as enabled.</p>
-          </div>
-        }
-        titleId="rule-modal-title"
+      <AddRuleModal
+        ruleDraft={ruleDraft}
+        visibleBrowsers={visibleBrowsers}
+        isSaving={isSaving}
+        onSetRuleDraft={setRuleDraft}
+        onAdd={() => void addRule()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Pattern
-          <input
-            value={ruleDraft.pattern}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                pattern: value,
-              }));
-            }}
-            placeholder="*.notion.so"
-          />
-        </label>
-        <PatternTypePicker
-          name="new-rule-pattern-type"
-          value={ruleDraft.patternType}
-          onChange={(value) =>
-            setRuleDraft((current) => ({
-              ...current,
-              patternType: value,
-            }))
-          }
-        />
-        <label>
-          Browser
-          <select
-            value={ruleDraft.browserId}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                browserId: value,
-              }));
-            }}
-          >
-            <option value="">Choose browser</option>
-            {visibleBrowsers.map((browser) => (
-              <option key={browser.id} value={browser.id}>
-                {browser.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="dual-toggle">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={ruleDraft.privateMode}
-              onChange={(event) => {
-                const checked = event.currentTarget.checked;
-                setRuleDraft((current) => ({
-                  ...current,
-                  privateMode: checked,
-                }));
-              }}
-            />
-            <span>Private mode</span>
-          </label>
-        </div>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addRule()}
-            disabled={isSaving || !visibleBrowsers.length}
-          >
-            Add rule
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : null;
 
   const manualBrowserConfirmationModal = manualBrowserConfirmation ? (
-    <ModalShell
-      title={<h3 id="manual-browser-confirm-title">Confirm manual browser</h3>}
-      titleId="manual-browser-confirm-title"
+    <ManualBrowserConfirmModal
+      confirmation={manualBrowserConfirmation}
+      isConfirming={isConfirmingManualBrowser}
+      onConfirm={() => void confirmManualBrowser()}
       onClose={() => setManualBrowserConfirmation(null)}
-    >
-      <p className="setting-help">
-        {manualBrowserConfirmation.validation.message}
-      </p>
-      <label>
-        Executable path
-        <input value={manualBrowserConfirmation.browser.path} readOnly />
-      </label>
-      <label>
-        Name
-        <input value={manualBrowserConfirmation.browser.name} readOnly />
-      </label>
-      <div className="inline-actions">
-        <button
-          type="button"
-          onClick={() => void confirmManualBrowser()}
-          disabled={isConfirmingManualBrowser}
-        >
-          {isConfirmingManualBrowser ? "Confirming..." : "Confirm and trust"}
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          disabled={isConfirmingManualBrowser}
-          onClick={() => setManualBrowserConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const deleteConfirmationModal = deleteConfirmation ? (
-    <ModalShell
-      title={<h3 id="delete-confirm-title">Confirm delete</h3>}
-      titleId="delete-confirm-title"
+    <DeleteConfirmModal
+      confirmation={deleteConfirmation}
+      onConfirm={confirmDelete}
       onClose={() => setDeleteConfirmation(null)}
-    >
-      {deleteConfirmation.kind === "manual-browser" ? (
-        <p className="setting-help">
-          Delete manual browser "{deleteConfirmation.browserName}"? This also
-          removes{" "}
-          {deleteConfirmation.affectedRuleCount === 0
-            ? "no rules"
-            : deleteConfirmation.affectedRuleCount === 1
-              ? "1 rule that targets it"
-              : `${deleteConfirmation.affectedRuleCount} rules that target it`}
-          .
-        </p>
-      ) : (
-        <p className="setting-help">
-          Delete {deleteConfirmation.ruleLabel}
-          {deleteConfirmation.pattern.trim()
-            ? ` for "${deleteConfirmation.pattern}"`
-            : ""}
-          ? This cannot be undone.
-        </p>
-      )}
-      <div className="inline-actions">
-        <button type="button" className="danger" onClick={confirmDelete}>
-          Delete
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => setDeleteConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const feedbackModalElement = feedbackModal ? (
-    <ModalShell
-      title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
-      titleId="feedback-modal-title"
+    <FeedbackModal
+      feedback={feedbackModal}
       onClose={() => setFeedbackModal(null)}
-    >
-      <p className={`status ${feedbackModal.kind}`}>{feedbackModal.message}</p>
-      <div className="inline-actions">
-        <button type="button" onClick={() => setFeedbackModal(null)}>
-          {feedbackModal.confirmLabel ?? "OK"}
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   if (isLoading) {
