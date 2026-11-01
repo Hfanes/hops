@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
+    WebviewUrl, WebviewWindowBuilder,
 };
 
 #[cfg(target_os = "windows")]
@@ -361,27 +361,72 @@ fn picker_window_height(browser_count: usize) -> u32 {
     desired.clamp(PICKER_MENU_MIN_HEIGHT, PICKER_MENU_MAX_HEIGHT)
 }
 
-fn picker_window_position(
-    app: &AppHandle,
-    cursor_x: i32,
-    cursor_y: i32,
+/// The usable area of a monitor in physical pixels, plus its DPI scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MonitorBounds {
+    x: i32,
+    y: i32,
     width: u32,
     height: u32,
-) -> (i32, i32) {
-    let desired_x = cursor_x + PICKER_CURSOR_OFFSET_X;
-    let desired_y = cursor_y + PICKER_CURSOR_OFFSET_Y;
+    scale_factor: f64,
+}
 
-    if let Ok(Some(monitor)) = app.monitor_from_point(cursor_x as f64, cursor_y as f64) {
-        let monitor_position = monitor.position();
-        let monitor_size = monitor.size();
-        let min_x = monitor_position.x;
-        let min_y = monitor_position.y;
-        let max_x = (monitor_position.x + monitor_size.width as i32 - width as i32).max(min_x);
-        let max_y = (monitor_position.y + monitor_size.height as i32 - height as i32).max(min_y);
-        return (desired_x.clamp(min_x, max_x), desired_y.clamp(min_y, max_y));
+/// Physical position and size of the picker, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PickerLayout {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn monitor_bounds_at(app: &AppHandle, x: i32, y: i32) -> Option<MonitorBounds> {
+    let monitor = app.monitor_from_point(x as f64, y as f64).ok()??;
+    // The work area excludes the taskbar, so the picker never opens underneath it.
+    let work_area = monitor.work_area();
+    Some(MonitorBounds {
+        x: work_area.position.x,
+        y: work_area.position.y,
+        width: work_area.size.width,
+        height: work_area.size.height,
+        scale_factor: monitor.scale_factor(),
+    })
+}
+
+/// Places the picker near the cursor and keeps it fully inside the monitor.
+///
+/// The menu size and cursor offsets are logical pixels, while the cursor and
+/// monitor bounds are physical pixels. Everything is converted to physical
+/// pixels with the monitor's scale factor before clamping; otherwise at 150%
+/// scaling the clamp would assume a window 1.5x smaller than it really is.
+fn picker_window_layout(
+    cursor_x: i32,
+    cursor_y: i32,
+    logical_width: u32,
+    logical_height: u32,
+    monitor: MonitorBounds,
+) -> PickerLayout {
+    let scale = if monitor.scale_factor.is_finite() && monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let to_physical = |value: f64| (value * scale).round();
+
+    let width = to_physical(logical_width as f64) as u32;
+    let height = to_physical(logical_height as f64) as u32;
+    let desired_x = cursor_x + to_physical(PICKER_CURSOR_OFFSET_X as f64) as i32;
+    let desired_y = cursor_y + to_physical(PICKER_CURSOR_OFFSET_Y as f64) as i32;
+
+    let max_x = (monitor.x + monitor.width as i32 - width as i32).max(monitor.x);
+    let max_y = (monitor.y + monitor.height as i32 - height as i32).max(monitor.y);
+
+    PickerLayout {
+        x: desired_x.clamp(monitor.x, max_x),
+        y: desired_y.clamp(monitor.y, max_y),
+        width,
+        height,
     }
-
-    (desired_x.max(0), desired_y.max(0))
 }
 
 fn picker_debug_log(message: &str) {
@@ -676,21 +721,52 @@ fn show_picker_window_with_session(
 
     let window = ensure_picker_window(app)?;
     let menu_height = picker_window_height(session.browsers.len());
-    window
-        .set_size(Size::Logical(LogicalSize::new(
-            PICKER_MENU_WIDTH as f64,
-            menu_height as f64,
-        )))
-        .map_err(|error| format!("Could not resize picker window during picker show: {error}"))?;
+    let resize_error =
+        |error: tauri::Error| format!("Could not resize picker window during picker show: {error}");
+    let move_error =
+        |error: tauri::Error| format!("Could not move picker window during picker show: {error}");
 
-    if let Some((cursor_x, cursor_y)) = current_cursor_position() {
-        let (x, y) =
-            picker_window_position(app, cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height);
-        window
-            .set_position(Position::Physical(PhysicalPosition::new(x, y)))
-            .map_err(|error| format!("Could not move picker window during picker show: {error}"))?;
-    } else {
-        let _ = window.center();
+    let cursor = current_cursor_position();
+    let monitor = cursor.and_then(|(x, y)| monitor_bounds_at(app, x, y));
+
+    match (cursor, monitor) {
+        (Some((cursor_x, cursor_y)), Some(monitor)) => {
+            let layout =
+                picker_window_layout(cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height, monitor);
+            // Move first: landing on a monitor with a different DPI can rescale the
+            // window, so the exact physical size is applied after the move.
+            window
+                .set_position(Position::Physical(PhysicalPosition::new(
+                    layout.x, layout.y,
+                )))
+                .map_err(move_error)?;
+            window
+                .set_size(Size::Physical(PhysicalSize::new(
+                    layout.width,
+                    layout.height,
+                )))
+                .map_err(resize_error)?;
+        }
+        (cursor, _) => {
+            window
+                .set_size(Size::Logical(LogicalSize::new(
+                    PICKER_MENU_WIDTH as f64,
+                    menu_height as f64,
+                )))
+                .map_err(resize_error)?;
+
+            match cursor {
+                Some((cursor_x, cursor_y)) => window
+                    .set_position(Position::Physical(PhysicalPosition::new(
+                        (cursor_x + PICKER_CURSOR_OFFSET_X).max(0),
+                        (cursor_y + PICKER_CURSOR_OFFSET_Y).max(0),
+                    )))
+                    .map_err(move_error)?,
+                None => {
+                    let _ = window.center();
+                }
+            }
+        }
     }
 
     window
@@ -852,6 +928,70 @@ mod tests {
             running,
         )
         .expect("picker session should build")
+    }
+
+    fn monitor(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> MonitorBounds {
+        MonitorBounds {
+            x,
+            y,
+            width,
+            height,
+            scale_factor,
+        }
+    }
+
+    #[test]
+    fn picker_layout_opens_beside_cursor_with_room_to_spare() {
+        let layout = picker_window_layout(100, 200, 280, 200, monitor(0, 0, 1920, 1040, 1.0));
+        assert_eq!(
+            layout,
+            PickerLayout {
+                x: 100 + PICKER_CURSOR_OFFSET_X,
+                y: 200 + PICKER_CURSOR_OFFSET_Y,
+                width: 280,
+                height: 200,
+            }
+        );
+    }
+
+    #[test]
+    fn picker_layout_scales_size_before_clamping_to_screen_edge() {
+        // 4K panel at 150%: the picker is 420x300 physical pixels, not 280x200.
+        let layout = picker_window_layout(3830, 2100, 280, 200, monitor(0, 0, 3840, 2100, 1.5));
+
+        assert_eq!((layout.width, layout.height), (420, 300));
+        assert_eq!((layout.x, layout.y), (3840 - 420, 2100 - 300));
+        assert!(layout.x + layout.width as i32 <= 3840);
+        assert!(layout.y + layout.height as i32 <= 2100);
+    }
+
+    #[test]
+    fn picker_layout_scales_cursor_offset() {
+        let layout = picker_window_layout(100, 100, 280, 200, monitor(0, 0, 3840, 2100, 2.0));
+        assert_eq!(layout.x, 100 + PICKER_CURSOR_OFFSET_X * 2);
+        assert_eq!(layout.y, 100 + PICKER_CURSOR_OFFSET_Y * 2);
+    }
+
+    #[test]
+    fn picker_layout_stays_on_secondary_monitor_left_of_primary() {
+        let secondary = monitor(-2560, 0, 2560, 1400, 1.25);
+        let layout = picker_window_layout(-5, 1390, 280, 200, secondary);
+
+        assert_eq!((layout.width, layout.height), (350, 250));
+        assert_eq!((layout.x, layout.y), (-350, 1400 - 250));
+    }
+
+    #[test]
+    fn picker_layout_respects_work_area_above_taskbar() {
+        // 1080p monitor whose work area stops 40px above the bottom for the taskbar.
+        let layout = picker_window_layout(500, 1075, 280, 200, monitor(0, 0, 1920, 1040, 1.0));
+        assert_eq!(layout.y, 1040 - 200);
+    }
+
+    #[test]
+    fn picker_layout_ignores_invalid_scale_factor() {
+        let layout = picker_window_layout(0, 0, 280, 200, monitor(0, 0, 1920, 1040, 0.0));
+        assert_eq!((layout.width, layout.height), (280, 200));
     }
 
     #[test]
