@@ -1,0 +1,22 @@
+name: Version check
+
+# Catches a half-done version bump before it reaches main, where it would
+# trigger a release with mismatched versions.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check that all version declarations agree
+        run: bash .github/scripts/check-version.sh
