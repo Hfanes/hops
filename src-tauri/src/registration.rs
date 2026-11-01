@@ -17,22 +17,9 @@ use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 use winreg::RegKey;
 
 #[cfg(target_os = "windows")]
-const ASSOCF_NONE: u32 = 0;
+use windows_sys::Win32::Foundation::{S_FALSE, S_OK};
 #[cfg(target_os = "windows")]
-const ASSOCSTR_PROGID: u32 = 20;
-
-#[cfg(target_os = "windows")]
-#[link(name = "Shlwapi")]
-unsafe extern "system" {
-    fn AssocQueryStringW(
-        flags: u32,
-        str: u32,
-        psz_assoc: *const u16,
-        psz_extra: *const u16,
-        psz_out: *mut u16,
-        pcch_out: *mut u32,
-    ) -> i32;
-}
+use windows_sys::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_PROGID};
 
 pub(crate) fn open_windows_default_apps() -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -157,7 +144,7 @@ fn query_url_association_prog_id(scheme: &str) -> Option<String> {
     };
 
     // S_FALSE means the first call returned the required length.
-    if first_result != 1 || length == 0 {
+    if first_result != S_FALSE || length == 0 {
         return None;
     }
 
@@ -173,7 +160,7 @@ fn query_url_association_prog_id(scheme: &str) -> Option<String> {
         )
     };
 
-    if second_result != 0 || length == 0 {
+    if second_result != S_OK || length == 0 {
         return None;
     }
 
