@@ -9,7 +9,7 @@ mod registration;
 mod routing;
 mod tray;
 
-use config::load_or_init_config;
+use config::{load_or_init_config, ConfigCache};
 use picker::{
     extract_url_from_args, handle_incoming_url, hide_picker_window_internal, hide_settings_window,
     install_picker_shortcut_observer, is_ctrl_shift_picker_trigger_currently_active,
@@ -58,6 +58,7 @@ pub fn run() {
             }
         }))
         .manage(PickerState::default())
+        .manage(ConfigCache::default())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name(HOPS_APP_NAME)
