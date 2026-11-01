@@ -7,6 +7,7 @@ use crate::CONFIG_FILENAME;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -190,7 +191,33 @@ pub(crate) fn save_config_internal(
 pub(crate) fn write_config_file(path: &Path, config: &AppConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config)
         .map_err(|error| format!("Could not serialize config JSON: {error}"))?;
-    fs::write(path, json).map_err(|error| format!("Could not write config to {:?}: {error}", path))
+    write_file_atomically(path, json.as_bytes())
+        .map_err(|error| format!("Could not write config to {:?}: {error}", path))
+}
+
+/// Writes to a sibling temp file, flushes it to disk, then renames it over `path`.
+///
+/// A crash or power loss mid-write leaves either the old file or the new one,
+/// never a truncated mix. On Windows, `fs::rename` replaces the target
+/// (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`).
+fn write_file_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut temp_name = path.as_os_str().to_owned();
+    temp_name.push(".tmp");
+    let temp_path = PathBuf::from(temp_name);
+
+    let result = (|| {
+        let mut file = fs::File::create(&temp_path)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp_path, path)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -274,6 +301,37 @@ mod tests {
         assert!(loaded.onboarding_completed);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_config_file_replaces_existing_file_without_leaving_temp_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("hops-atomic-write-{unique}"));
+        fs::create_dir_all(&dir).expect("temp dir should create");
+        let path = dir.join("config.json");
+        fs::write(&path, "stale content that is longer than nothing")
+            .expect("existing config should write");
+
+        let mut config = reset_config_with_detected_browsers(Vec::new(), false);
+        write_config_file(&path, &config).expect("first write should succeed");
+        config.onboarding_completed = true;
+        write_config_file(&path, &config).expect("overwrite should succeed");
+
+        let data = fs::read_to_string(&path).expect("config should be readable");
+        let loaded = serde_json::from_str::<AppConfig>(&data).expect("config should parse");
+        assert!(loaded.onboarding_completed);
+
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .expect("temp dir should list")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("config.json")]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
