@@ -9,11 +9,10 @@ mod registration;
 mod routing;
 mod tray;
 
-use config::load_or_init_config;
+use config::{load_or_init_config, ConfigCache};
 use picker::{
     extract_url_from_args, handle_incoming_url, hide_picker_window_internal, hide_settings_window,
-    install_picker_shortcut_observer, is_ctrl_shift_picker_trigger_currently_active,
-    show_settings_window, PickerState,
+    is_ctrl_shift_picker_trigger_currently_active, show_settings_window, PickerState,
 };
 use tray::setup_tray;
 
@@ -39,8 +38,32 @@ const PICKER_CURSOR_OFFSET_X: i32 = 6;
 const PICKER_CURSOR_OFFSET_Y: i32 = 10;
 const PICKER_IDLE_DESTROY_SECONDS: u64 = 15;
 
+/// Lets the resident Hops bring the picker to the foreground.
+///
+/// Windows only lets a process take focus in limited cases, e.g. when it was
+/// started by the foreground process. The tray instance usually qualifies for
+/// none of them, but the short-lived instance Windows starts for a clicked link
+/// does. That instance calls this before forwarding the link and exiting,
+/// passing its permission on. Without it the picker can appear unfocused,
+/// which leaves Escape and click-outside unable to dismiss it.
+///
+/// Harmless when the calling process is not allowed to grant focus: the call
+/// just fails.
+#[cfg(target_os = "windows")]
+fn allow_other_instance_to_take_focus() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+
+    unsafe {
+        AllowSetForegroundWindow(ASFW_ANY);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must run before the single-instance plugin forwards a link and exits.
+    #[cfg(target_os = "windows")]
+    allow_other_instance_to_take_focus();
+
     let initial_args: Vec<String> = std::env::args().collect();
     let initial_picker_trigger = is_ctrl_shift_picker_trigger_currently_active();
 
@@ -58,6 +81,7 @@ pub fn run() {
             }
         }))
         .manage(PickerState::default())
+        .manage(ConfigCache::default())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name(HOPS_APP_NAME)
@@ -76,7 +100,6 @@ pub fn run() {
             }
 
             let state = app.state::<PickerState>();
-            install_picker_shortcut_observer(&state);
 
             let startup_url = extract_url_from_args(&initial_args);
 
@@ -122,6 +145,7 @@ pub fn run() {
             commands::open_config_folder,
             commands::save_config,
             commands::validate_manual_browser,
+            commands::validate_regex_patterns,
             commands::refresh_browsers,
             commands::list_running_browser_ids,
             commands::preview_route,

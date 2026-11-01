@@ -36,7 +36,7 @@ const PATTERN_HELP: Record<
   prefix: {
     title: "Prefix",
     description:
-      "Matches when the URL starts exactly with your pattern. Great for locking one path branch.",
+      "Matches when the URL starts with your pattern. Protocol and domain ignore case; the path must match exactly. Great for locking one path branch.",
     examples: [
       "Pattern: https://linear.app/myteam -> matches https://linear.app/myteam/issue/ENG-1",
       "Pattern: https://linear.app/myteam -> does not match https://linear.app/otherteam",
@@ -53,7 +53,8 @@ const PATTERN_HELP: Record<
   },
   full_url: {
     title: "Full URL",
-    description: "Exact full-string match only.",
+    description:
+      "Exact match of the whole URL. Protocol and domain ignore case, and a missing trailing slash doesn't matter; the path and query must match exactly.",
     examples: [
       "Pattern: https://app.example.com/a -> matches only that exact URL",
       "Pattern: https://app.example.com/a -> does not match https://app.example.com/a?tab=1",

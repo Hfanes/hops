@@ -94,11 +94,29 @@ pub(crate) enum RouteAction {
     ShowPicker,
 }
 
+/// Why a route resolved the way it did. Serialized as the same snake_case
+/// strings the frontend has always received (e.g. `"no_match"`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RouteReason {
+    AlwaysShowPicker,
+    RuleMatchRunning,
+    RuleBrowserNotRunningUseDefault,
+    RuleBrowserNotRunningNoDefault,
+    RuleBrowserNotRunning,
+    DefaultBrowserMissing,
+    DefaultBrowser,
+    DefaultBrowserNotRunning,
+    NoMatch,
+    CtrlShiftClick,
+    ManualOpen,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RouteDecision {
     pub(crate) action: RouteAction,
-    pub(crate) reason: String,
+    pub(crate) reason: RouteReason,
     pub(crate) browser_id: Option<String>,
     pub(crate) browser_name: Option<String>,
     pub(crate) private_mode: bool,
@@ -169,7 +187,7 @@ pub(crate) struct PickerBrowserEntry {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PickerSession {
     pub(crate) url: String,
-    pub(crate) reason: String,
+    pub(crate) reason: RouteReason,
     pub(crate) source: PickerLaunchSource,
     pub(crate) preferred_browser_id: Option<String>,
     pub(crate) preferred_private_mode: bool,

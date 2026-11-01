@@ -1,7 +1,8 @@
-use crate::browsers::RunningProcessSnapshot;
+use crate::browsers::{current_running_processes, RunningProcessSnapshot};
 use crate::config::load_or_init_config;
 use crate::models::{
     AppConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction, RouteDecision,
+    RouteReason,
 };
 use crate::routing::{
     normalize_http_url, open_url_with_browser, picker_decision,
@@ -12,147 +13,42 @@ use crate::{
     PICKER_MENU_CHROME_HEIGHT, PICKER_MENU_MAX_HEIGHT, PICKER_MENU_MIN_HEIGHT,
     PICKER_MENU_ROW_HEIGHT, PICKER_MENU_WIDTH, PICKER_SESSION_EVENT, PICKER_WINDOW_LABEL,
 };
-#[cfg(target_os = "windows")]
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
+    WebviewUrl, WebviewWindowBuilder,
 };
 
 #[cfg(target_os = "windows")]
-const VK_SHIFT: i32 = 0x10;
+use windows_sys::Win32::Foundation::POINT;
 #[cfg(target_os = "windows")]
-const VK_CONTROL: i32 = 0x11;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
+};
 #[cfg(target_os = "windows")]
-const VK_MENU: i32 = 0x12;
-#[cfg(target_os = "windows")]
-const WH_MOUSE_LL: i32 = 14;
-#[cfg(target_os = "windows")]
-const HC_ACTION: i32 = 0;
-#[cfg(target_os = "windows")]
-const WM_LBUTTONDOWN: u32 = 0x0201;
-const PICKER_SHORTCUT_LATCH_DURATION: Duration = Duration::from_secs(30);
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct WinPoint {
-    x: i32,
-    y: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct WinMsg {
-    hwnd: isize,
-    message: u32,
-    w_param: usize,
-    l_param: isize,
-    time: u32,
-    point: WinPoint,
-    private: u32,
-}
-
-#[cfg(target_os = "windows")]
-type HookProc = Option<unsafe extern "system" fn(i32, usize, isize) -> isize>;
-
-#[cfg(target_os = "windows")]
-#[link(name = "User32")]
-unsafe extern "system" {
-    fn GetAsyncKeyState(v_key: i32) -> i16;
-    fn GetCursorPos(lp_point: *mut WinPoint) -> i32;
-    fn SetWindowsHookExW(
-        id_hook: i32,
-        hook_proc: HookProc,
-        instance: isize,
-        thread_id: u32,
-    ) -> isize;
-    fn CallNextHookEx(hook: isize, code: i32, w_param: usize, l_param: isize) -> isize;
-    fn GetMessageW(message: *mut WinMsg, window: isize, filter_min: u32, filter_max: u32) -> i32;
-    fn UnhookWindowsHookEx(hook: isize) -> i32;
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "Kernel32")]
-unsafe extern "system" {
-    fn GetModuleHandleW(module_name: *const u16) -> isize;
-}
+use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 #[derive(Default)]
 pub(crate) struct PickerState {
     pub(crate) session: Mutex<Option<PickerSession>>,
     pub(crate) idle_destroy_token: Mutex<u64>,
-    shortcut_latch: Arc<PickerShortcutLatch>,
-}
-
-#[derive(Default)]
-struct PickerShortcutLatch {
-    last_ctrl_shift_click: Mutex<Option<Instant>>,
-}
-
-impl PickerState {
-    #[cfg(test)]
-    fn remember_picker_shortcut_click_at(&self, clicked_at: Instant) {
-        self.shortcut_latch.remember_click_at(clicked_at);
-    }
-
-    fn consume_recent_picker_shortcut_at(&self, now: Instant) -> bool {
-        self.shortcut_latch
-            .consume_if_recent_at(now, PICKER_SHORTCUT_LATCH_DURATION)
-    }
-}
-
-impl PickerShortcutLatch {
-    fn remember_click_now(&self) {
-        self.remember_click_at(Instant::now());
-    }
-
-    fn remember_click_at(&self, clicked_at: Instant) {
-        match self.last_ctrl_shift_click.lock() {
-            Ok(mut last_click) => {
-                *last_click = Some(clicked_at);
-            }
-            Err(_) => eprintln!("Hops picker: shortcut latch lock was poisoned."),
-        }
-    }
-
-    fn clear(&self) {
-        match self.last_ctrl_shift_click.lock() {
-            Ok(mut last_click) => *last_click = None,
-            Err(_) => eprintln!("Hops picker: shortcut latch lock was poisoned."),
-        }
-    }
-
-    fn consume_if_recent_at(&self, now: Instant, max_age: Duration) -> bool {
-        let mut last_click = match self.last_ctrl_shift_click.lock() {
-            Ok(last_click) => last_click,
-            Err(_) => {
-                eprintln!("Hops picker: shortcut latch lock was poisoned.");
-                return false;
-            }
-        };
-
-        let Some(clicked_at) = *last_click else {
-            return false;
-        };
-
-        *last_click = None;
-        now.checked_duration_since(clicked_at)
-            .is_none_or(|age| age <= max_age)
-    }
 }
 
 fn clean_cli_value(value: &str) -> String {
     value.trim().trim_matches('"').to_string()
 }
 
+/// Whether `key` is physically held right now (the high bit of GetAsyncKeyState).
+#[cfg(target_os = "windows")]
+fn is_key_down(key: VIRTUAL_KEY) -> bool {
+    (unsafe { GetAsyncKeyState(i32::from(key)) }) < 0
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
-    let ctrl_pressed = unsafe { GetAsyncKeyState(VK_CONTROL) } < 0;
-    let shift_pressed = unsafe { GetAsyncKeyState(VK_SHIFT) } < 0;
-    ctrl_pressed && shift_pressed
+    is_key_down(VK_CONTROL) && is_key_down(VK_SHIFT)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -160,30 +56,9 @@ pub(crate) fn is_ctrl_shift_picker_trigger_currently_active() -> bool {
     false
 }
 
-fn is_ctrl_shift_picker_trigger_active_with_latch<F>(
-    state: &PickerState,
-    mut is_currently_active: F,
-    now: Instant,
-) -> bool
-where
-    F: FnMut() -> bool,
-{
-    let currently_active = is_currently_active();
-    let recently_clicked = state.consume_recent_picker_shortcut_at(now);
-    currently_active || recently_clicked
-}
-
-fn is_ctrl_shift_picker_trigger_active(state: &PickerState) -> bool {
-    is_ctrl_shift_picker_trigger_active_with_latch(
-        state,
-        is_ctrl_shift_picker_trigger_currently_active,
-        Instant::now(),
-    )
-}
-
 #[cfg(target_os = "windows")]
 fn is_alt_pressed() -> bool {
-    (unsafe { GetAsyncKeyState(VK_MENU) }) < 0
+    is_key_down(VK_MENU)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -193,7 +68,7 @@ fn is_alt_pressed() -> bool {
 
 #[cfg(target_os = "windows")]
 fn current_cursor_position() -> Option<(i32, i32)> {
-    let mut point = WinPoint { x: 0, y: 0 };
+    let mut point = POINT { x: 0, y: 0 };
     let success = unsafe { GetCursorPos(&mut point) };
     if success == 0 {
         return None;
@@ -206,99 +81,6 @@ fn current_cursor_position() -> Option<(i32, i32)> {
 fn current_cursor_position() -> Option<(i32, i32)> {
     None
 }
-
-#[cfg(target_os = "windows")]
-struct PickerShortcutClickObserver {
-    latch: Arc<PickerShortcutLatch>,
-}
-
-#[cfg(target_os = "windows")]
-impl PickerShortcutClickObserver {
-    fn new(latch: Arc<PickerShortcutLatch>) -> Self {
-        Self { latch }
-    }
-
-    fn handle_mouse_message_with_key_state<F>(&self, message: u32, mut keys_active: F)
-    where
-        F: FnMut() -> bool,
-    {
-        if message != WM_LBUTTONDOWN {
-            return;
-        }
-
-        if keys_active() {
-            self.latch.remember_click_now();
-        } else {
-            self.latch.clear();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-static PICKER_SHORTCUT_OBSERVER: OnceLock<Arc<PickerShortcutClickObserver>> = OnceLock::new();
-
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn picker_mouse_hook_proc(
-    code: i32,
-    w_param: usize,
-    l_param: isize,
-) -> isize {
-    if code == HC_ACTION {
-        if let Some(observer) = PICKER_SHORTCUT_OBSERVER.get() {
-            observer.handle_mouse_message_with_key_state(
-                w_param as u32,
-                is_ctrl_shift_picker_trigger_currently_active,
-            );
-        }
-    }
-
-    unsafe { CallNextHookEx(0, code, w_param, l_param) }
-}
-
-#[cfg(target_os = "windows")]
-fn run_picker_shortcut_hook_message_loop() {
-    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
-    let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(picker_mouse_hook_proc), module, 0) };
-
-    if hook == 0 {
-        eprintln!(
-            "Hops picker: could not install Ctrl+Shift click observer: {}",
-            std::io::Error::last_os_error()
-        );
-        return;
-    }
-
-    let mut message = WinMsg {
-        hwnd: 0,
-        message: 0,
-        w_param: 0,
-        l_param: 0,
-        time: 0,
-        point: WinPoint { x: 0, y: 0 },
-        private: 0,
-    };
-
-    while unsafe { GetMessageW(&mut message, 0, 0, 0) } > 0 {}
-    unsafe {
-        UnhookWindowsHookEx(hook);
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn install_picker_shortcut_observer(state: &PickerState) {
-    let observer = Arc::new(PickerShortcutClickObserver::new(Arc::clone(
-        &state.shortcut_latch,
-    )));
-
-    if PICKER_SHORTCUT_OBSERVER.set(observer).is_err() {
-        return;
-    }
-
-    thread::spawn(run_picker_shortcut_hook_message_loop);
-}
-
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn install_picker_shortcut_observer(_state: &PickerState) {}
 
 pub(crate) fn extract_url_from_args(args: &[String]) -> Option<String> {
     for (index, arg) in args.iter().enumerate() {
@@ -361,32 +143,80 @@ fn picker_window_height(browser_count: usize) -> u32 {
     desired.clamp(PICKER_MENU_MIN_HEIGHT, PICKER_MENU_MAX_HEIGHT)
 }
 
-fn picker_window_position(
-    app: &AppHandle,
-    cursor_x: i32,
-    cursor_y: i32,
+/// The usable area of a monitor in physical pixels, plus its DPI scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MonitorBounds {
+    x: i32,
+    y: i32,
     width: u32,
     height: u32,
-) -> (i32, i32) {
-    let desired_x = cursor_x + PICKER_CURSOR_OFFSET_X;
-    let desired_y = cursor_y + PICKER_CURSOR_OFFSET_Y;
+    scale_factor: f64,
+}
 
-    if let Ok(Some(monitor)) = app.monitor_from_point(cursor_x as f64, cursor_y as f64) {
-        let monitor_position = monitor.position();
-        let monitor_size = monitor.size();
-        let min_x = monitor_position.x;
-        let min_y = monitor_position.y;
-        let max_x = (monitor_position.x + monitor_size.width as i32 - width as i32).max(min_x);
-        let max_y = (monitor_position.y + monitor_size.height as i32 - height as i32).max(min_y);
-        return (desired_x.clamp(min_x, max_x), desired_y.clamp(min_y, max_y));
+/// Physical position and size of the picker, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PickerLayout {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn monitor_bounds_at(app: &AppHandle, x: i32, y: i32) -> Option<MonitorBounds> {
+    let monitor = app.monitor_from_point(x as f64, y as f64).ok()??;
+    // The work area excludes the taskbar, so the picker never opens underneath it.
+    let work_area = monitor.work_area();
+    Some(MonitorBounds {
+        x: work_area.position.x,
+        y: work_area.position.y,
+        width: work_area.size.width,
+        height: work_area.size.height,
+        scale_factor: monitor.scale_factor(),
+    })
+}
+
+/// Places the picker near the cursor and keeps it fully inside the monitor.
+///
+/// The menu size and cursor offsets are logical pixels, while the cursor and
+/// monitor bounds are physical pixels. Everything is converted to physical
+/// pixels with the monitor's scale factor before clamping; otherwise at 150%
+/// scaling the clamp would assume a window 1.5x smaller than it really is.
+fn picker_window_layout(
+    cursor_x: i32,
+    cursor_y: i32,
+    logical_width: u32,
+    logical_height: u32,
+    monitor: MonitorBounds,
+) -> PickerLayout {
+    let scale = if monitor.scale_factor.is_finite() && monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let to_physical = |value: f64| (value * scale).round();
+
+    let width = to_physical(logical_width as f64) as u32;
+    let height = to_physical(logical_height as f64) as u32;
+    let desired_x = cursor_x + to_physical(PICKER_CURSOR_OFFSET_X as f64) as i32;
+    let desired_y = cursor_y + to_physical(PICKER_CURSOR_OFFSET_Y as f64) as i32;
+
+    let max_x = (monitor.x + monitor.width as i32 - width as i32).max(monitor.x);
+    let max_y = (monitor.y + monitor.height as i32 - height as i32).max(monitor.y);
+
+    PickerLayout {
+        x: desired_x.clamp(monitor.x, max_x),
+        y: desired_y.clamp(monitor.y, max_y),
+        width,
+        height,
     }
-
-    (desired_x.max(0), desired_y.max(0))
 }
 
 fn picker_debug_log(message: &str) {
     #[cfg(debug_assertions)]
     eprintln!("Hops picker: {message}");
+    // Release builds compile the log out; keep the parameter "used".
+    #[cfg(not(debug_assertions))]
+    let _ = message;
 }
 
 fn next_picker_idle_destroy_token(state: &PickerState) -> Result<u64, String> {
@@ -503,11 +333,11 @@ fn build_picker_session(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<PickerSession, String> {
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     build_picker_session_with_running_processes(
         config,
         url,
@@ -523,7 +353,7 @@ fn build_picker_session_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
     running: &mut RunningProcessSnapshot<F>,
@@ -556,7 +386,7 @@ where
 
     Ok(PickerSession {
         url: normalized_url,
-        reason: reason.to_string(),
+        reason,
         source,
         preferred_browser_id: preferred_browser_id.map(str::to_string),
         preferred_private_mode,
@@ -610,7 +440,7 @@ where
     F: FnMut() -> std::collections::HashSet<String>,
 {
     if force_picker {
-        return Ok(picker_decision("ctrl_shift_click"));
+        return Ok(picker_decision(RouteReason::CtrlShiftClick));
     }
 
     resolve_route_with_running_processes(config, url, running)
@@ -622,7 +452,7 @@ pub(crate) fn show_picker_window(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
 ) -> Result<(), String> {
@@ -645,7 +475,7 @@ fn show_picker_window_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
     source: PickerLaunchSource,
-    reason: &str,
+    reason: RouteReason,
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
     running: &mut RunningProcessSnapshot<F>,
@@ -676,21 +506,52 @@ fn show_picker_window_with_session(
 
     let window = ensure_picker_window(app)?;
     let menu_height = picker_window_height(session.browsers.len());
-    window
-        .set_size(Size::Logical(LogicalSize::new(
-            PICKER_MENU_WIDTH as f64,
-            menu_height as f64,
-        )))
-        .map_err(|error| format!("Could not resize picker window during picker show: {error}"))?;
+    let resize_error =
+        |error: tauri::Error| format!("Could not resize picker window during picker show: {error}");
+    let move_error =
+        |error: tauri::Error| format!("Could not move picker window during picker show: {error}");
 
-    if let Some((cursor_x, cursor_y)) = current_cursor_position() {
-        let (x, y) =
-            picker_window_position(app, cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height);
-        window
-            .set_position(Position::Physical(PhysicalPosition::new(x, y)))
-            .map_err(|error| format!("Could not move picker window during picker show: {error}"))?;
-    } else {
-        let _ = window.center();
+    let cursor = current_cursor_position();
+    let monitor = cursor.and_then(|(x, y)| monitor_bounds_at(app, x, y));
+
+    match (cursor, monitor) {
+        (Some((cursor_x, cursor_y)), Some(monitor)) => {
+            let layout =
+                picker_window_layout(cursor_x, cursor_y, PICKER_MENU_WIDTH, menu_height, monitor);
+            // Move first: landing on a monitor with a different DPI can rescale the
+            // window, so the exact physical size is applied after the move.
+            window
+                .set_position(Position::Physical(PhysicalPosition::new(
+                    layout.x, layout.y,
+                )))
+                .map_err(move_error)?;
+            window
+                .set_size(Size::Physical(PhysicalSize::new(
+                    layout.width,
+                    layout.height,
+                )))
+                .map_err(resize_error)?;
+        }
+        (cursor, _) => {
+            window
+                .set_size(Size::Logical(LogicalSize::new(
+                    PICKER_MENU_WIDTH as f64,
+                    menu_height as f64,
+                )))
+                .map_err(resize_error)?;
+
+            match cursor {
+                Some((cursor_x, cursor_y)) => window
+                    .set_position(Position::Physical(PhysicalPosition::new(
+                        (cursor_x + PICKER_CURSOR_OFFSET_X).max(0),
+                        (cursor_y + PICKER_CURSOR_OFFSET_Y).max(0),
+                    )))
+                    .map_err(move_error)?,
+                None => {
+                    let _ = window.center();
+                }
+            }
+        }
     }
 
     window
@@ -711,11 +572,11 @@ pub(crate) fn handle_incoming_url(
     force_picker_hint: bool,
 ) -> Result<RouteDecision, String> {
     let (config, detected_picker_trigger) = load_config_with_picker_trigger_snapshot(
-        || is_ctrl_shift_picker_trigger_active(state),
+        is_ctrl_shift_picker_trigger_currently_active,
         || load_or_init_config(app, false),
     )?;
     let force_picker = force_picker_hint || detected_picker_trigger;
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     let decision = resolve_incoming_url_decision_with_running_processes(
         &config,
         url,
@@ -723,14 +584,15 @@ pub(crate) fn handle_incoming_url(
         &mut running,
     )?;
 
-    if decision.action == RouteAction::ShowPicker && decision.reason == "ctrl_shift_click" {
+    if decision.action == RouteAction::ShowPicker && decision.reason == RouteReason::CtrlShiftClick
+    {
         show_picker_window(
             app,
             state,
             &config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
         )?;
@@ -749,7 +611,7 @@ pub(crate) fn handle_incoming_url(
             &config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
             &mut running,
@@ -846,12 +708,76 @@ mod tests {
             config,
             url,
             PickerLaunchSource::Route,
-            &decision.reason,
+            decision.reason,
             decision.browser_id.as_deref(),
             decision.private_mode,
             running,
         )
         .expect("picker session should build")
+    }
+
+    fn monitor(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> MonitorBounds {
+        MonitorBounds {
+            x,
+            y,
+            width,
+            height,
+            scale_factor,
+        }
+    }
+
+    #[test]
+    fn picker_layout_opens_beside_cursor_with_room_to_spare() {
+        let layout = picker_window_layout(100, 200, 280, 200, monitor(0, 0, 1920, 1040, 1.0));
+        assert_eq!(
+            layout,
+            PickerLayout {
+                x: 100 + PICKER_CURSOR_OFFSET_X,
+                y: 200 + PICKER_CURSOR_OFFSET_Y,
+                width: 280,
+                height: 200,
+            }
+        );
+    }
+
+    #[test]
+    fn picker_layout_scales_size_before_clamping_to_screen_edge() {
+        // 4K panel at 150%: the picker is 420x300 physical pixels, not 280x200.
+        let layout = picker_window_layout(3830, 2100, 280, 200, monitor(0, 0, 3840, 2100, 1.5));
+
+        assert_eq!((layout.width, layout.height), (420, 300));
+        assert_eq!((layout.x, layout.y), (3840 - 420, 2100 - 300));
+        assert!(layout.x + layout.width as i32 <= 3840);
+        assert!(layout.y + layout.height as i32 <= 2100);
+    }
+
+    #[test]
+    fn picker_layout_scales_cursor_offset() {
+        let layout = picker_window_layout(100, 100, 280, 200, monitor(0, 0, 3840, 2100, 2.0));
+        assert_eq!(layout.x, 100 + PICKER_CURSOR_OFFSET_X * 2);
+        assert_eq!(layout.y, 100 + PICKER_CURSOR_OFFSET_Y * 2);
+    }
+
+    #[test]
+    fn picker_layout_stays_on_secondary_monitor_left_of_primary() {
+        let secondary = monitor(-2560, 0, 2560, 1400, 1.25);
+        let layout = picker_window_layout(-5, 1390, 280, 200, secondary);
+
+        assert_eq!((layout.width, layout.height), (350, 250));
+        assert_eq!((layout.x, layout.y), (-350, 1400 - 250));
+    }
+
+    #[test]
+    fn picker_layout_respects_work_area_above_taskbar() {
+        // 1080p monitor whose work area stops 40px above the bottom for the taskbar.
+        let layout = picker_window_layout(500, 1075, 280, 200, monitor(0, 0, 1920, 1040, 1.0));
+        assert_eq!(layout.y, 1040 - 200);
+    }
+
+    #[test]
+    fn picker_layout_ignores_invalid_scale_factor() {
+        let layout = picker_window_layout(0, 0, 280, 200, monitor(0, 0, 1920, 1040, 0.0));
+        assert_eq!((layout.width, layout.height), (280, 200));
     }
 
     #[test]
@@ -894,100 +820,8 @@ mod tests {
         .expect("route should resolve");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "ctrl_shift_click");
+        assert_eq!(decision.reason, RouteReason::CtrlShiftClick);
         assert_eq!(scan_count.get(), 0);
-    }
-
-    #[test]
-    fn recent_picker_shortcut_click_forces_picker_after_current_keys_are_released() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_secs(15)
-        ));
-    }
-
-    #[test]
-    fn expired_picker_shortcut_latch_does_not_force_picker() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(30_001)
-        ));
-    }
-
-    #[test]
-    fn consumed_picker_shortcut_latch_does_not_force_second_url() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(500)
-        ));
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(600)
-        ));
-    }
-
-    #[test]
-    fn live_key_state_also_consumes_recent_shortcut_click() {
-        let state = PickerState::default();
-        let now = std::time::Instant::now();
-        state.remember_picker_shortcut_click_at(now);
-
-        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || true,
-            now + Duration::from_millis(500)
-        ));
-        assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
-            &state,
-            || false,
-            now + Duration::from_millis(600)
-        ));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn shortcut_observer_records_only_ctrl_shift_left_clicks() {
-        let state = PickerState::default();
-        let observer = PickerShortcutClickObserver::new(Arc::clone(&state.shortcut_latch));
-        let now = std::time::Instant::now();
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || false);
-        assert!(!state.consume_recent_picker_shortcut_at(now));
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN + 1, || true);
-        assert!(!state.consume_recent_picker_shortcut_at(now));
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || true);
-        assert!(state.consume_recent_picker_shortcut_at(Instant::now()));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn ordinary_left_click_clears_pending_shortcut_click() {
-        let state = PickerState::default();
-        let observer = PickerShortcutClickObserver::new(Arc::clone(&state.shortcut_latch));
-        let now = std::time::Instant::now();
-
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || true);
-        observer.handle_mouse_message_with_key_state(WM_LBUTTONDOWN, || false);
-
-        assert!(!state.consume_recent_picker_shortcut_at(now));
     }
 
     #[test]
@@ -1007,7 +841,7 @@ mod tests {
         .expect("route should resolve");
 
         assert_eq!(decision.action, RouteAction::OpenBrowser);
-        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(decision.reason, RouteReason::DefaultBrowser);
         assert_eq!(scan_count.get(), 0);
     }
 
@@ -1029,7 +863,7 @@ mod tests {
         )
         .expect("route should resolve");
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
         assert_eq!(scan_count.get(), 1);
 
         let session = build_route_picker_session(
@@ -1056,7 +890,7 @@ mod tests {
             resolve_route_with_running_processes(&config, "https://example.com", &mut running)
                 .expect("route should resolve");
 
-        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(decision.reason, RouteReason::AlwaysShowPicker);
         assert_eq!(scan_count.get(), 0);
 
         let session =
@@ -1081,7 +915,7 @@ mod tests {
             resolve_route_with_running_processes(&config, "https://example.com", &mut running)
                 .expect("route should resolve");
 
-        assert_eq!(decision.reason, "no_match");
+        assert_eq!(decision.reason, RouteReason::NoMatch);
         assert_eq!(scan_count.get(), 0);
 
         let session =
@@ -1108,7 +942,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Route,
-            "test",
+            RouteReason::NoMatch,
             Some(preferred.id.as_str()),
             false,
             &mut running,
@@ -1140,7 +974,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,
@@ -1171,7 +1005,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,
@@ -1199,7 +1033,7 @@ mod tests {
             &config,
             "https://example.com",
             PickerLaunchSource::Manual,
-            "test",
+            RouteReason::NoMatch,
             None,
             false,
             &mut running,

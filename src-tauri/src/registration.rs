@@ -17,22 +17,9 @@ use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 use winreg::RegKey;
 
 #[cfg(target_os = "windows")]
-const ASSOCF_NONE: u32 = 0;
+use windows_sys::Win32::Foundation::{S_FALSE, S_OK};
 #[cfg(target_os = "windows")]
-const ASSOCSTR_PROGID: u32 = 20;
-
-#[cfg(target_os = "windows")]
-#[link(name = "Shlwapi")]
-unsafe extern "system" {
-    fn AssocQueryStringW(
-        flags: u32,
-        str: u32,
-        psz_assoc: *const u16,
-        psz_extra: *const u16,
-        psz_out: *mut u16,
-        pcch_out: *mut u32,
-    ) -> i32;
-}
+use windows_sys::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_PROGID};
 
 pub(crate) fn open_windows_default_apps() -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -68,6 +55,7 @@ pub(crate) fn register_hops_as_browser() -> Result<BrowserRegistrationStatus, St
     #[cfg(target_os = "windows")]
     {
         register_hops_as_browser_windows()?;
+        notify_file_associations_changed();
         browser_registration_status_windows()
     }
 
@@ -81,12 +69,29 @@ pub(crate) fn unregister_hops_as_browser() -> Result<BrowserRegistrationStatus, 
     #[cfg(target_os = "windows")]
     {
         unregister_hops_as_browser_windows()?;
+        notify_file_associations_changed();
         browser_registration_status_windows()
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         Err("Unregistering Hops as a browser is only supported on Windows.".to_string())
+    }
+}
+
+/// Tells Windows that file and URL associations changed, so Settings > Default
+/// apps and Explorer show Hops' new registration state without a sign-out.
+#[cfg(target_os = "windows")]
+fn notify_file_associations_changed() {
+    use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED as _,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
     }
 }
 
@@ -139,7 +144,7 @@ fn query_url_association_prog_id(scheme: &str) -> Option<String> {
     };
 
     // S_FALSE means the first call returned the required length.
-    if first_result != 1 || length == 0 {
+    if first_result != S_FALSE || length == 0 {
         return None;
     }
 
@@ -155,7 +160,7 @@ fn query_url_association_prog_id(scheme: &str) -> Option<String> {
         )
     };
 
-    if second_result != 0 || length == 0 {
+    if second_result != S_OK || length == 0 {
         return None;
     }
 

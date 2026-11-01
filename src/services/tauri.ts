@@ -60,6 +60,16 @@ export function validateManualBrowser(
   });
 }
 
+/**
+ * Validates regex patterns with the backend's Rust regex engine, which is what
+ * routing uses. Returns one entry per pattern: null when valid, else the error.
+ */
+export function validateRegexPatterns(
+  patterns: string[],
+): Promise<Array<string | null>> {
+  return invoke<Array<string | null>>("validate_regex_patterns", { patterns });
+}
+
 export function refreshBrowsers(): Promise<AppConfig> {
   return invoke<AppConfig>("refresh_browsers");
 }
@@ -152,16 +162,92 @@ export async function getAppAboutInfo(): Promise<AppAboutInfo> {
   };
 }
 
-export async function checkForAppUpdate(): Promise<AppUpdateStatus> {
-  const [currentVersion, update] = await Promise.all([getVersion(), check()]);
+const UPDATE_CHECK_CACHE_KEY = "hops.updateCheck";
+const NOTIFIED_UPDATE_VERSION_KEY = "hops.notifiedUpdateVersion";
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-  return {
+interface CachedUpdateCheck {
+  checkedAt: number;
+  status: AppUpdateStatus;
+}
+
+// localStorage can be unavailable or throw (cleared or blocked site data), so
+// every access is guarded and a failure simply means "check the network".
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Best effort only.
+  }
+}
+
+function readCachedUpdateCheck(currentVersion: string): AppUpdateStatus | null {
+  const raw = readStorage(UPDATE_CHECK_CACHE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const cached = JSON.parse(raw) as Partial<CachedUpdateCheck>;
+    const age = Date.now() - Number(cached.checkedAt);
+    const isFresh = age >= 0 && age < UPDATE_CHECK_INTERVAL_MS;
+    // A different current version means Hops was updated since the check.
+    if (!isFresh || cached.status?.currentVersion !== currentVersion) {
+      return null;
+    }
+    return cached.status;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks GitHub for a newer Hops release.
+ *
+ * Automatic checks reuse a result from the last 24 hours so opening settings
+ * does not hit the network every time. Pass `force` for user-initiated checks.
+ */
+export async function checkForAppUpdate(
+  options: { force?: boolean } = {},
+): Promise<AppUpdateStatus> {
+  const currentVersion = await getVersion();
+
+  if (!options.force) {
+    const cached = readCachedUpdateCheck(currentVersion);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const update = await check();
+  const status: AppUpdateStatus = {
     currentVersion,
     available: Boolean(update),
     version: update?.version ?? null,
     date: update?.date ?? null,
     body: update?.body ?? null,
   };
+
+  const cached: CachedUpdateCheck = { checkedAt: Date.now(), status };
+  writeStorage(UPDATE_CHECK_CACHE_KEY, JSON.stringify(cached));
+  return status;
+}
+
+/** Whether the "update available" notification was already shown for `version`. */
+export function wasUpdateNotified(version: string): boolean {
+  return readStorage(NOTIFIED_UPDATE_VERSION_KEY) === version;
+}
+
+export function markUpdateNotified(version: string) {
+  writeStorage(NOTIFIED_UPDATE_VERSION_KEY, version);
 }
 
 export async function notifyAppUpdateAvailable(

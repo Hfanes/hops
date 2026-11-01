@@ -1,32 +1,10 @@
 import type {
   AppConfig,
-  RuleConfig,
   SettingsDraft,
 } from "../types";
 
 export const EMPTY_STATUS = { kind: "idle", text: "" } as const;
 export const ROUTE_OPEN_TIMEOUT_MS = 10_000;
-
-export function regexErrorsByRule(rules: RuleConfig[]): Record<string, string> {
-  const errors: Record<string, string> = {};
-
-  for (const rule of rules) {
-    if (rule.patternType !== "regex") {
-      continue;
-    }
-
-    try {
-      new RegExp(rule.pattern);
-    } catch (error) {
-      errors[rule.id] =
-        error instanceof Error
-          ? error.message
-          : "Invalid regular expression pattern.";
-    }
-  }
-
-  return errors;
-}
 
 export function createRuleId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {

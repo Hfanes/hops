@@ -1,6 +1,6 @@
 [package]
 name = "hops"
-version = "0.1.5"
+version = "0.1.6"
 description = "Hops is a lightweight Windows tray app that routes external links to the right browser based on your rules. Hops is not a web browser."
 authors = ["hfa"]
 license = "MIT"
@@ -13,31 +13,36 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "hops_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Hops is a Windows desktop app: only the rlib linked into hops.exe is needed.
+# The template's staticlib (iOS) and cdylib (Android) outputs were never used
+# and built an extra hops_lib.dll on every build.
+crate-type = ["rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.6.2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2.5.1"
+tauri = { version = "=2.11.2", features = ["tray-icon"] }
+tauri-plugin-autostart = "=2.5.1"
 tauri-plugin-opener = "=2.5.3"
-tauri-plugin-single-instance = "2.4.2"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-regex = "1.12.3"
-globset = "0.4.18"
-url = "2.5.8"
-tauri-plugin-updater = "2.10.1"
-tauri-plugin-process = "2.3.1"
+tauri-plugin-single-instance = "=2.4.2"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+regex = "=1.12.3"
+globset = "=0.4.18"
+url = "=2.5.8"
+tauri-plugin-updater = "=2.10.1"
+tauri-plugin-process = "=2.3.1"
 tauri-plugin-notification = "=2.3.3"
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.52"
-windows-sys = { version = "0.59", features = [
+winreg = "=0.52.0"
+windows-sys = { version = "=0.59.0", features = [
   "Win32_Foundation",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging"
 ] }
 

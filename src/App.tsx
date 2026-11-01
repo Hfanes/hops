@@ -2,171 +2,88 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
-  checkForAppUpdate,
-  getBrowserRegistrationStatus,
   getAppAboutInfo,
   getConfigFilePath,
-  getStartWithWindowsEnabled,
-  installAvailableUpdate,
-  listRunningBrowserIds,
   loadConfig,
-  notifyAppUpdateAvailable,
   openConfigFolder,
-  openWindowsDefaultApps,
   previewRouteWithConfig,
-  registerHopsAsBrowser,
-  refreshBrowsers,
   resetConfig,
   routeAndOpenWithConfig,
   saveConfig,
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showSettingsWindow,
   showPickerForUrl,
-  unregisterHopsAsBrowser,
-  validateManualBrowser,
 } from "./services/tauri";
-import type { AppAboutInfo, AppUpdateStatus } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
-import { ModalShell } from "./components/common/ModalShell";
-import { PatternTypePicker } from "./components/common/PatternTypePicker";
+import {
+  DeleteConfirmModal,
+  type DeleteConfirmation,
+} from "./components/common/DeleteConfirmModal";
+import {
+  FeedbackModal,
+  type FeedbackMessage,
+} from "./components/common/FeedbackModal";
 import { StatusBanner } from "./components/common/StatusBanner";
 import { ScrollTopButton } from "./components/layout/ScrollTopButton";
 import { SidebarNav } from "./components/layout/SidebarNav";
 import { BottomStatusBar } from "./components/layout/BottomStatusBar";
 import { Topbar } from "./components/layout/Topbar";
 import { AboutPanel } from "./features/about/AboutPanel";
+import { useAppUpdates } from "./features/about/useAppUpdates";
+import { AddBrowserModal } from "./features/browsers/AddBrowserModal";
 import { BrowsersTab } from "./features/browsers/BrowsersTab";
+import { ManualBrowserConfirmModal } from "./features/browsers/ManualBrowserConfirmModal";
+import { useBrowserManager } from "./features/browsers/useBrowserManager";
+import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { RouterTester } from "./features/router/RouterTester";
+import { AddRuleModal } from "./features/rules/AddRuleModal";
 import { RulesTab } from "./features/rules/RulesTab";
+import { useRuleManager } from "./features/rules/useRuleManager";
 import { SettingsTab } from "./features/settings/SettingsTab";
+import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
   applySettingsDraft,
-  cloneSet,
-  createBrowserId,
-  createRuleId,
   EMPTY_STATUS,
-  regexErrorsByRule,
   rejectAfter,
   ROUTE_OPEN_TIMEOUT_MS,
-  settingsDraftFromConfig,
 } from "./lib/appTypes";
+import { useConfigStore } from "./hooks/useConfigStore";
 import { useDocumentTheme } from "./hooks/useDocumentTheme";
 import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
 import type {
   AppConfig,
-  BrowserDraft,
-  BrowserConfig,
-  ManualBrowserValidationResult,
-  BrowserRegistrationStatus,
   FormModal,
   RouteDecision,
-  RuleDraft,
-  RuleConfig,
   SettingsActionPanel,
-  SettingsDraft,
   StatusState,
   TabId,
-  ThemePreference,
 } from "./types";
 import "./styles/App.css";
 
-const RUNNING_STATE_REFRESH_THROTTLE_MS = 1000;
-
 function App() {
-  const [config, setConfig] = useState<AppConfig | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("settings");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [theme, setTheme] = useState<ThemePreference>("light");
   const [status, setStatus] = useState<StatusState>(EMPTY_STATUS);
   const [isLoading, setIsLoading] = useState(true);
-  const [saveActivityCount, setSaveActivityCount] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
   const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
-  const [runningBrowserIds, setRunningBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [registrationStatus, setRegistrationStatus] =
-    useState<BrowserRegistrationStatus | null>(null);
-  const [startWithWindowsEnabled, setStartWithWindowsEnabled] = useState<
-    boolean | null
-  >(null);
-  const [isUpdatingStartWithWindows, setIsUpdatingStartWithWindows] =
-    useState(false);
-  const [aboutInfo, setAboutInfo] = useState<AppAboutInfo | null>(null);
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
-    null,
-  );
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
     useState(true);
   const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
   const [isCheckingOnboardingDefaults, setIsCheckingOnboardingDefaults] =
     useState(false);
-  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(
-    null,
-  );
-  const [dirtyRuleIds, setDirtyRuleIds] = useState<Set<string>>(new Set());
-  const [savingRuleIds, setSavingRuleIds] = useState<Set<string>>(new Set());
-  const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [savingBrowserIds, setSavingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [failedBrowserIds, setFailedBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
   const [settingsActionPanel, setSettingsActionPanel] =
     useState<SettingsActionPanel>("none");
   const [formModal, setFormModal] = useState<FormModal>(null);
 
-  const [browserDraft, setBrowserDraft] = useState<BrowserDraft>({
-    name: "",
-    path: "",
-    privateFlag: "",
-  });
-  const [manualBrowserConfirmation, setManualBrowserConfirmation] = useState<{
-    mode: "add" | "edit";
-    browserId: string | null;
-    browser: BrowserConfig;
-    validation: ManualBrowserValidationResult;
-  } | null>(null);
-  const [feedbackModal, setFeedbackModal] = useState<{
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  } | null>(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState<
-    | {
-        kind: "manual-browser";
-        browserId: string;
-        browserName: string;
-        affectedRuleCount: number;
-      }
-    | {
-        kind: "rule";
-        ruleId: string;
-        ruleLabel: string;
-        pattern: string;
-      }
-    | null
-  >(null);
-  const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
-    useState(false);
-
-  const [ruleDraft, setRuleDraft] = useState<RuleDraft>({
-    pattern: "",
-    patternType: "hostname",
-    browserId: "",
-    privateMode: false,
-  });
+  const [feedbackModal, setFeedbackModal] = useState<FeedbackMessage | null>(
+    null,
+  );
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DeleteConfirmation | null>(null);
 
   const [routeInput, setRouteInput] = useState(
     "https://github.com/openai/codex",
@@ -175,26 +92,79 @@ function App() {
     null,
   );
   const [isRouting, setIsRouting] = useState(false);
-  const isSaving = saveActivityCount > 0;
-  const configRef = useRef<AppConfig | null>(null);
-  const persistedConfigRef = useRef<AppConfig | null>(null);
-  const settingsDraftRef = useRef<SettingsDraft | null>(null);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const browserSaveTimersRef = useRef<Record<string, number>>({});
-  const settingsSaveTimerRef = useRef<number | null>(null);
-  const notifiedUpdateVersionsRef = useRef<Set<string>>(new Set());
   const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
-  const isRunningStateRefreshInFlightRef = useRef(false);
-  const lastRunningStateRefreshAtRef = useRef(0);
 
-  useEffect(() => {
-    configRef.current = config;
-  }, [config]);
-
-  useEffect(() => {
-    settingsDraftRef.current = settingsDraft;
-  }, [settingsDraft]);
+  const configStore = useConfigStore({ setStatus });
+  const {
+    config,
+    configRef,
+    theme,
+    settingsDraft,
+    isSaving,
+    applyLoadedConfig,
+    persistConfig,
+    scheduleSettingsSave,
+    cancelScheduledSettingsSave,
+    waitForQueuedSaves,
+    updateSettingsDraft,
+    updateThemePreference,
+  } = configStore;
+  const {
+    aboutInfo,
+    setAboutInfo,
+    updateStatus,
+    isCheckingUpdate,
+    isInstallingUpdate,
+    refreshAbout,
+    updateApp,
+  } = useAppUpdates({ activeTab, isLoading, setStatus });
+  const {
+    registrationStatus,
+    isRegistering,
+    startWithWindowsEnabled,
+    setStartWithWindowsEnabled,
+    isUpdatingStartWithWindows,
+    refreshRegistrationStatus,
+    refreshStartWithWindowsStatus,
+    updateStartWithWindows,
+    openDefaultAppsSettings,
+    registerBrowserIntegration,
+    unregisterBrowserIntegration,
+  } = useSystemIntegration({ setStatus });
+  const { runningBrowserIds, refreshRunningState } = useRunningBrowsers({
+    activeTab,
+    isLoading,
+    configRef,
+  });
+  const {
+    isRefreshing,
+    pendingBrowserIds,
+    savingBrowserIds,
+    failedBrowserIds,
+    browserDraft,
+    setBrowserDraft,
+    manualBrowserConfirmation,
+    setManualBrowserConfirmation,
+    isConfirmingManualBrowser,
+    handleRefreshBrowsers,
+    updateBrowser,
+    flushBrowserSave,
+    toggleBrowserHidden,
+    requestDeleteManualBrowser,
+    deleteManualBrowser,
+    addManualBrowser,
+    confirmManualBrowser,
+    cancelPendingBrowserSaves,
+    resetBrowserEditState,
+  } = useBrowserManager({
+    store: configStore,
+    setStatus,
+    setFormModal,
+    showFeedbackModal,
+    onRequestDelete: setDeleteConfirmation,
+    refreshRunningState,
+  });
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((current) => !current);
@@ -234,38 +204,26 @@ function App() {
     () => config?.browsers.filter((browser) => !browser.isHidden) ?? [],
     [config],
   );
-
-  useEffect(() => {
-    if (!visibleBrowsers.length) {
-      return;
-    }
-
-    setRuleDraft((current) => {
-      if (
-        !current.browserId ||
-        !visibleBrowsers.some((browser) => browser.id === current.browserId)
-      ) {
-        return { ...current, browserId: visibleBrowsers[0].id };
-      }
-      return current;
-    });
-  }, [visibleBrowsers]);
-
-  const regexErrors = useMemo(
-    () => (config ? regexErrorsByRule(config.rules) : {}),
-    [config],
-  );
-
-  useEffect(() => {
-    return () => {
-      for (const timerId of Object.values(browserSaveTimersRef.current)) {
-        window.clearTimeout(timerId);
-      }
-      if (settingsSaveTimerRef.current !== null) {
-        window.clearTimeout(settingsSaveTimerRef.current);
-      }
-    };
-  }, []);
+  const {
+    dirtyRuleIds,
+    savingRuleIds,
+    ruleDraft,
+    setRuleDraft,
+    regexErrors,
+    updateRule,
+    saveRule,
+    deleteRule,
+    requestDeleteRule,
+    moveRule,
+    addRule,
+    resetRuleEditState,
+  } = useRuleManager({
+    store: configStore,
+    visibleBrowsers,
+    setStatus,
+    setFormModal,
+    onRequestDelete: setDeleteConfirmation,
+  });
 
   useEffect(() => {
     if (!config || config.onboardingCompleted) {
@@ -278,64 +236,6 @@ function App() {
   useEffect(() => {
     setFormModal(null);
   }, [activeTab]);
-
-  useEffect(() => {
-    if (activeTab !== "about") {
-      return;
-    }
-
-    void refreshAbout(false);
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (isLoading) {
-      return;
-    }
-
-    const idleId = window.requestIdleCallback(
-      () => void refreshStatusBarUpdate(),
-      { timeout: 5000 },
-    );
-    return () => window.cancelIdleCallback(idleId);
-  }, [isLoading]);
-
-  useEffect(() => {
-    if (activeTab !== "browsers" || isLoading) {
-      return;
-    }
-
-    void refreshRunningState({ force: true });
-
-    let disposed = false;
-    let unlistenFocus: (() => void) | null = null;
-
-    try {
-      void getCurrentWindow()
-        .onFocusChanged(({ payload }) => {
-          if (payload) {
-            void refreshRunningState();
-          }
-        })
-        .then((unlisten) => {
-          if (disposed) {
-            unlisten();
-            return;
-          }
-
-          unlistenFocus = unlisten;
-        })
-        .catch((error) => {
-          console.warn("Could not listen for Hops focus changes.", error);
-        });
-    } catch (error) {
-      console.warn("Could not access the current Hops window.", error);
-    }
-
-    return () => {
-      disposed = true;
-      unlistenFocus?.();
-    };
-  }, [activeTab, isLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -363,508 +263,8 @@ function App() {
     };
   }, []);
 
-  function applyConfigChange(transform: (current: AppConfig) => AppConfig) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return null;
-    }
-
-    const nextConfig = transform(currentConfig);
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-    return nextConfig;
-  }
-
-  function applyLoadedConfig(nextConfig: AppConfig) {
-    const nextSettingsDraft = settingsDraftFromConfig(nextConfig);
-
-    configRef.current = nextConfig;
-    persistedConfigRef.current = nextConfig;
-    settingsDraftRef.current = nextSettingsDraft;
-    setConfig(nextConfig);
-    setTheme(nextConfig.themePreference);
-    setSettingsDraft(nextSettingsDraft);
-  }
-
-  function normalizeBrowserPath(path: string) {
-    return path.trim().replace(/\//g, "\\").toLowerCase();
-  }
-
-  function findBrowserPathConflict(browser: BrowserConfig) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return null;
-    }
-
-    const normalizedPath = normalizeBrowserPath(browser.path);
-    if (!normalizedPath) {
-      return null;
-    }
-
-    return (
-      currentConfig.browsers.find(
-        (candidate) =>
-          candidate.id !== browser.id &&
-          normalizeBrowserPath(candidate.path) === normalizedPath,
-      ) ?? null
-    );
-  }
-
-  function showFeedbackModal(options: {
-    title: string;
-    message: string;
-    kind: "error" | "warning";
-    confirmLabel?: string;
-  }) {
+  function showFeedbackModal(options: FeedbackMessage) {
     setFeedbackModal(options);
-  }
-
-  function showBrowserValidationAlert(message: string) {
-    setStatus({
-      kind: "error",
-      text: message,
-    });
-    showFeedbackModal({
-      title: "Invalid browser configuration",
-      message,
-      kind: "error",
-    });
-  }
-
-  function revertBrowserToPersisted(browserId: string) {
-    const persistedConfig = persistedConfigRef.current;
-    const currentConfig = configRef.current;
-    if (!persistedConfig || !currentConfig) {
-      return;
-    }
-
-    const persistedBrowser = persistedConfig.browsers.find(
-      (browser) => browser.id === browserId,
-    );
-    if (!persistedBrowser) {
-      return;
-    }
-
-    const nextConfig: AppConfig = {
-      ...currentConfig,
-      browsers: currentConfig.browsers.map((browser) =>
-        browser.id === browserId ? persistedBrowser : browser,
-      ),
-    };
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-  }
-
-  function applyManualBrowserValidation(
-    browser: BrowserConfig,
-    validation: ManualBrowserValidationResult,
-  ): BrowserConfig {
-    return {
-      ...browser,
-      name: browser.name.trim() || validation.browserName,
-      privateFlag: validation.privateFlag,
-      iconKey: validation.iconKey ?? browser.iconKey ?? "generic",
-      manualTrust: validation.manualTrust,
-    };
-  }
-
-  async function validateManualBrowserConfig(
-    browser: BrowserConfig,
-    allowUserConfirmed = false,
-    options?: {
-      showAlert?: boolean;
-      revertBrowserId?: string;
-      allowConfirmationFlow?: boolean;
-    },
-  ): Promise<{
-    browser: BrowserConfig;
-    validation: ManualBrowserValidationResult;
-  } | null> {
-    const conflict = findBrowserPathConflict(browser);
-    if (conflict) {
-      const message = `A browser with this executable path already exists: "${conflict.name}".`;
-      if (options?.revertBrowserId) {
-        revertBrowserToPersisted(options.revertBrowserId);
-      }
-      if (options?.showAlert) {
-        showBrowserValidationAlert(message);
-      } else {
-        setStatus({
-          kind: "error",
-          text: message,
-        });
-      }
-      return null;
-    }
-
-    let validation: ManualBrowserValidationResult;
-    try {
-      validation = await validateManualBrowser({
-        name: browser.name,
-        path: browser.path,
-        privateFlag: browser.privateFlag,
-        allowUserConfirmed,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (options?.revertBrowserId) {
-        revertBrowserToPersisted(options.revertBrowserId);
-      }
-      if (options?.showAlert) {
-        showBrowserValidationAlert(message);
-      } else {
-        setStatus({
-          kind: "error",
-          text: message,
-        });
-      }
-      return null;
-    }
-
-    if (validation.requiresConfirmation) {
-      if (!options?.allowConfirmationFlow) {
-        const message = validation.message;
-        if (options?.revertBrowserId) {
-          revertBrowserToPersisted(options.revertBrowserId);
-        }
-        if (options?.showAlert) {
-          showBrowserValidationAlert(message);
-        } else {
-          setStatus({
-            kind: "error",
-            text: message,
-          });
-        }
-        return null;
-      }
-
-      return {
-        browser,
-        validation,
-      };
-    }
-
-    return {
-      browser: applyManualBrowserValidation(browser, validation),
-      validation,
-    };
-  }
-
-  function updateThemePreference(nextTheme: ThemePreference) {
-    setTheme(nextTheme);
-    setSettingsDraft((current) => {
-      const nextDraft = current
-        ? {
-            ...current,
-            themePreference: nextTheme,
-          }
-        : current;
-      settingsDraftRef.current = nextDraft;
-      return nextDraft;
-    });
-
-    const currentConfig = configRef.current;
-    if (!currentConfig || currentConfig.themePreference === nextTheme) {
-      return;
-    }
-
-    const nextConfig: AppConfig = {
-      ...currentConfig,
-      themePreference: nextTheme,
-    };
-
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-    void persistConfig(nextConfig, {
-      errorPrefix: "Could not save theme preference",
-      applySavedConfig: false,
-    });
-  }
-
-  function persistConfig(
-    nextConfig: AppConfig,
-    options?: {
-      successText?: string;
-      errorPrefix?: string;
-      onSuccess?: (saved: AppConfig) => void;
-      onError?: () => void;
-      onSettled?: () => void;
-      applySavedConfig?: boolean;
-    },
-  ) {
-    setSaveActivityCount((count) => count + 1);
-
-    const runSave = async () => {
-      try {
-        const saved = await saveConfig(nextConfig);
-        if (options?.applySavedConfig ?? true) {
-          applyLoadedConfig(saved);
-        }
-        options?.onSuccess?.(saved);
-        if (options?.successText) {
-          setStatus({ kind: "success", text: options.successText });
-        }
-      } catch (error) {
-        options?.onError?.();
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus({
-          kind: "error",
-          text: `${options?.errorPrefix ?? "Save failed"}: ${message}`,
-        });
-        throw error;
-      } finally {
-        setSaveActivityCount((count) => Math.max(0, count - 1));
-        options?.onSettled?.();
-      }
-    };
-
-    const queued = saveQueueRef.current.then(runSave, runSave);
-    saveQueueRef.current = queued.catch(() => undefined);
-    return queued;
-  }
-
-  function scheduleSettingsSave(nextConfig: AppConfig) {
-    if (settingsSaveTimerRef.current !== null) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-    }
-
-    settingsSaveTimerRef.current = window.setTimeout(() => {
-      settingsSaveTimerRef.current = null;
-      void persistConfig(nextConfig, {
-        errorPrefix: "Could not save settings",
-        applySavedConfig: false,
-      });
-    }, 350);
-  }
-
-  function updateSettingsDraft(
-    transform: (current: SettingsDraft) => SettingsDraft,
-  ) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return;
-    }
-
-    const currentDraft =
-      settingsDraftRef.current ?? settingsDraftFromConfig(currentConfig);
-    const nextDraft = transform(currentDraft);
-    const nextConfig = applySettingsDraft(currentConfig, nextDraft);
-
-    configRef.current = nextConfig;
-    settingsDraftRef.current = nextDraft;
-    setConfig(nextConfig);
-    setSettingsDraft(nextDraft);
-    scheduleSettingsSave(nextConfig);
-  }
-
-  function scheduleBrowserSave(browserId: string, nextConfig: AppConfig) {
-    const existingTimer = browserSaveTimersRef.current[browserId];
-    if (existingTimer) {
-      window.clearTimeout(existingTimer);
-    }
-
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-
-    browserSaveTimersRef.current[browserId] = window.setTimeout(() => {
-      delete browserSaveTimersRef.current[browserId];
-      setPendingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.delete(browserId);
-        return next;
-      });
-      setSavingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.add(browserId);
-        return next;
-      });
-
-      void (async () => {
-        try {
-          let configToSave = nextConfig;
-          const browser = configToSave.browsers.find(
-            (item) => item.id === browserId,
-          );
-          if (browser) {
-            const prepared = await validateManualBrowserConfig(browser, false, {
-              showAlert: true,
-              revertBrowserId: browserId,
-              allowConfirmationFlow: browser.source === "manual",
-            });
-            if (!prepared) {
-              return;
-            }
-
-            if (
-              browser.source === "manual" &&
-              prepared.validation.requiresConfirmation
-            ) {
-              setManualBrowserConfirmation({
-                mode: "edit",
-                browserId,
-                browser,
-                validation: prepared.validation,
-              });
-              setStatus({
-                kind: "warning",
-                text: prepared.validation.message,
-              });
-              return;
-            }
-
-            configToSave = {
-              ...configToSave,
-              browsers: configToSave.browsers.map((item) =>
-                item.id === browserId ? prepared.browser : item,
-              ),
-            };
-            configRef.current = configToSave;
-            setConfig(configToSave);
-          }
-
-          await persistConfig(configToSave, {
-            errorPrefix: "Could not save browser changes",
-            onSuccess: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                if (!current.has(browserId)) {
-                  return current;
-                }
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-            },
-            onError: () => {
-              setSavingBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.delete(browserId);
-                return next;
-              });
-              setFailedBrowserIds((current) => {
-                const next = cloneSet(current);
-                next.add(browserId);
-                return next;
-              });
-            },
-          });
-        } finally {
-          setSavingBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
-        }
-      })();
-    }, 500);
-  }
-
-  function flushBrowserSave(browserId: string) {
-    const existingTimer = browserSaveTimersRef.current[browserId];
-    const latestConfig = configRef.current;
-    if (!existingTimer || !latestConfig) {
-      return;
-    }
-
-    window.clearTimeout(existingTimer);
-    delete browserSaveTimersRef.current[browserId];
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
-
-    void (async () => {
-      try {
-        let configToSave = latestConfig;
-        const browser = configToSave.browsers.find(
-          (item) => item.id === browserId,
-        );
-        if (browser) {
-          const prepared = await validateManualBrowserConfig(browser, false, {
-            showAlert: true,
-            revertBrowserId: browserId,
-            allowConfirmationFlow: browser.source === "manual",
-          });
-          if (!prepared) {
-            return;
-          }
-
-          if (
-            browser.source === "manual" &&
-            prepared.validation.requiresConfirmation
-          ) {
-            setManualBrowserConfirmation({
-              mode: "edit",
-              browserId,
-              browser,
-              validation: prepared.validation,
-            });
-            setStatus({
-              kind: "warning",
-              text: prepared.validation.message,
-            });
-            return;
-          }
-
-          configToSave = {
-            ...configToSave,
-            browsers: configToSave.browsers.map((item) =>
-              item.id === browserId ? prepared.browser : item,
-            ),
-          };
-          configRef.current = configToSave;
-          setConfig(configToSave);
-        }
-
-        await persistConfig(configToSave, {
-          errorPrefix: "Could not save browser changes",
-          onSuccess: () => {
-            setFailedBrowserIds((current) => {
-              if (!current.has(browserId)) {
-                return current;
-              }
-              const next = cloneSet(current);
-              next.delete(browserId);
-              return next;
-            });
-          },
-          onError: () => {
-            setFailedBrowserIds((current) => {
-              const next = cloneSet(current);
-              next.add(browserId);
-              return next;
-            });
-          },
-        });
-      } finally {
-        setSavingBrowserIds((current) => {
-          const next = cloneSet(current);
-          next.delete(browserId);
-          return next;
-        });
-      }
-    })();
   }
 
   async function closeSettingsWindow() {
@@ -873,19 +273,8 @@ function App() {
     }
 
     isClosingRef.current = true;
-    const hasPendingSettingsSave = settingsSaveTimerRef.current !== null;
-    const hasPendingBrowserSaves =
-      Object.keys(browserSaveTimersRef.current).length > 0;
-
-    if (settingsSaveTimerRef.current !== null) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-      settingsSaveTimerRef.current = null;
-    }
-
-    for (const timerId of Object.values(browserSaveTimersRef.current)) {
-      window.clearTimeout(timerId);
-    }
-    browserSaveTimersRef.current = {};
+    const hasPendingSettingsSave = cancelScheduledSettingsSave();
+    const hasPendingBrowserSaves = cancelPendingBrowserSaves();
 
     try {
       const latestConfig = configRef.current;
@@ -899,7 +288,7 @@ function App() {
         });
       }
 
-      await saveQueueRef.current;
+      await waitForQueuedSaves();
       await getCurrentWindow().destroy();
     } catch {
       isClosingRef.current = false;
@@ -907,482 +296,6 @@ function App() {
         scheduleSettingsSave(configRef.current);
       }
     }
-  }
-
-  async function refreshRegistrationStatus() {
-    try {
-      const next = await getBrowserRegistrationStatus();
-      setRegistrationStatus(next);
-      return next;
-    } catch {
-      setRegistrationStatus(null);
-      return null;
-    }
-  }
-
-  async function refreshStartWithWindowsStatus() {
-    try {
-      const enabled = await getStartWithWindowsEnabled();
-      setStartWithWindowsEnabled(enabled);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(null);
-      setStatus({
-        kind: "warning",
-        text: `Could not read Start with Windows status: ${message}`,
-      });
-    }
-  }
-
-  async function updateStartWithWindows(checked: boolean) {
-    const previous = startWithWindowsEnabled;
-    setStartWithWindowsEnabled(checked);
-    setIsUpdatingStartWithWindows(true);
-
-    try {
-      const enabled = await saveStartWithWindowsEnabled(checked);
-      setStartWithWindowsEnabled(enabled);
-      setStatus({
-        kind: "success",
-        text: enabled
-          ? "Hops will start when you sign in."
-          : "Hops will not start when you sign in.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStartWithWindowsEnabled(previous);
-      setStatus({
-        kind: "error",
-        text: `Could not update Start with Windows: ${message}`,
-      });
-    } finally {
-      setIsUpdatingStartWithWindows(false);
-    }
-  }
-
-  async function refreshRunningState({ force = false } = {}) {
-    if (!configRef.current || isRunningStateRefreshInFlightRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-    if (
-      !force &&
-      now - lastRunningStateRefreshAtRef.current <
-        RUNNING_STATE_REFRESH_THROTTLE_MS
-    ) {
-      return;
-    }
-
-    isRunningStateRefreshInFlightRef.current = true;
-    lastRunningStateRefreshAtRef.current = now;
-
-    try {
-      const runningIds = await listRunningBrowserIds();
-      setRunningBrowserIds(new Set(runningIds));
-    } catch {
-      // Running-state refresh should be non-blocking.
-    } finally {
-      isRunningStateRefreshInFlightRef.current = false;
-    }
-  }
-
-  async function handleRefreshBrowsers() {
-    setIsRefreshing(true);
-    try {
-      const refreshed = await refreshBrowsers();
-      applyLoadedConfig(refreshed);
-      setStatus({ kind: "success", text: "Browser detection refreshed." });
-      await refreshRunningState({ force: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ kind: "error", text: `Refresh failed: ${message}` });
-    } finally {
-      setIsRefreshing(false);
-    }
-  }
-
-  function updateBrowser(browserId: string, patch: Partial<BrowserConfig>) {
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      browsers: current.browsers.map((browser) => {
-        if (browser.id !== browserId) {
-          return browser;
-        }
-
-        const nextBrowser = { ...browser, ...patch };
-        if (browser.source === "manual" && patch.path !== undefined) {
-          nextBrowser.manualTrust = null;
-        }
-        return nextBrowser;
-      }),
-    }));
-
-    if (!nextConfig) {
-      return;
-    }
-
-    scheduleBrowserSave(browserId, nextConfig);
-  }
-
-  function toggleBrowserHidden(browserId: string, isHidden: boolean) {
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      defaultBrowserId:
-        isHidden && current.defaultBrowserId === browserId
-          ? null
-          : current.defaultBrowserId,
-      browsers: current.browsers.map((browser) =>
-        browser.id === browserId ? { ...browser, isHidden } : browser,
-      ),
-    }));
-
-    if (!nextConfig) {
-      return;
-    }
-
-    void persistConfig(nextConfig, {
-      successText: isHidden
-        ? "Browser hidden from picker."
-        : "Browser restored to picker.",
-      errorPrefix: "Could not update browser visibility",
-    });
-  }
-
-  function deleteManualBrowser(browserId: string) {
-    const currentConfig = configRef.current;
-    const browser = currentConfig?.browsers.find(
-      (item) => item.id === browserId,
-    );
-    if (!currentConfig || !browser || browser.source !== "manual") {
-      return;
-    }
-
-    const existingTimer = browserSaveTimersRef.current[browserId];
-    if (existingTimer) {
-      window.clearTimeout(existingTimer);
-      delete browserSaveTimersRef.current[browserId];
-    }
-
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      defaultBrowserId:
-        current.defaultBrowserId === browserId
-          ? null
-          : current.defaultBrowserId,
-      browsers: current.browsers.filter((item) => item.id !== browserId),
-      rules: current.rules.filter((rule) => rule.browserId !== browserId),
-    }));
-
-    if (!nextConfig) {
-      return;
-    }
-
-    setPendingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-
-    void persistConfig(nextConfig, {
-      successText: `Deleted manual browser "${browser.name}".`,
-      errorPrefix: "Could not delete manual browser",
-    });
-  }
-
-  function requestDeleteManualBrowser(browserId: string) {
-    const currentConfig = configRef.current;
-    const browser = currentConfig?.browsers.find(
-      (item) => item.id === browserId,
-    );
-    if (!currentConfig || !browser || browser.source !== "manual") {
-      return;
-    }
-
-    setDeleteConfirmation({
-      kind: "manual-browser",
-      browserId,
-      browserName: browser.name,
-      affectedRuleCount: currentConfig.rules.filter(
-        (rule) => rule.browserId === browserId,
-      ).length,
-    });
-  }
-
-  async function addManualBrowser() {
-    const currentConfig = configRef.current;
-    const name = browserDraft.name.trim();
-    const path = browserDraft.path.trim();
-
-    if (!currentConfig || !name || !path) {
-      setStatus({
-        kind: "error",
-        text: "Manual browser needs both a name and an executable path.",
-      });
-      return;
-    }
-
-    const browser: BrowserConfig = {
-      id: createBrowserId(),
-      name,
-      path,
-      privateFlag: browserDraft.privateFlag.trim() || null,
-      iconKey: null,
-      manualTrust: null,
-      source: "manual",
-      isHidden: false,
-    };
-    const prepared = await validateManualBrowserConfig(browser, false, {
-      showAlert: true,
-      allowConfirmationFlow: true,
-    });
-    if (!prepared) {
-      return;
-    }
-
-    if (prepared.validation.requiresConfirmation) {
-      setManualBrowserConfirmation({
-        mode: "add",
-        browserId: null,
-        browser,
-        validation: prepared.validation,
-      });
-      setStatus({
-        kind: "warning",
-        text: prepared.validation.message,
-      });
-      return;
-    }
-
-    setBrowserDraft({ name: "", path: "", privateFlag: "" });
-    setFormModal(null);
-    const nextConfig: AppConfig = {
-      ...currentConfig,
-      browsers: [...currentConfig.browsers, prepared.browser],
-    };
-    await persistConfig(nextConfig, {
-      successText: `Added manual browser "${prepared.browser.name}".`,
-      errorPrefix: "Could not add manual browser",
-    });
-  }
-
-  async function confirmManualBrowser() {
-    const confirmation = manualBrowserConfirmation;
-    const currentConfig = configRef.current;
-    if (!confirmation || !currentConfig || isConfirmingManualBrowser) {
-      return;
-    }
-
-    setIsConfirmingManualBrowser(true);
-    setManualBrowserConfirmation(null);
-    if (confirmation.mode === "add") {
-      setFormModal(null);
-      setBrowserDraft({ name: "", path: "", privateFlag: "" });
-    }
-
-    try {
-      if (confirmation.mode === "add") {
-        const prepared = await validateManualBrowserConfig(
-          confirmation.browser,
-          true,
-          {
-            showAlert: true,
-          },
-        );
-        if (!prepared) {
-          return;
-        }
-
-        const latestConfig = configRef.current;
-        if (!latestConfig) {
-          return;
-        }
-
-        const nextConfig: AppConfig = {
-          ...latestConfig,
-          browsers: [...latestConfig.browsers, prepared.browser],
-        };
-        await persistConfig(nextConfig, {
-          successText: `Added manual browser "${prepared.browser.name}".`,
-          errorPrefix: "Could not add manual browser",
-        });
-        return;
-      }
-
-      const browserId = confirmation.browserId;
-      if (!browserId) {
-        return;
-      }
-
-      const currentBrowser = currentConfig.browsers.find(
-        (browser) => browser.id === browserId,
-      );
-      if (!currentBrowser) {
-        return;
-      }
-
-      const prepared = await validateManualBrowserConfig(currentBrowser, true, {
-        showAlert: true,
-        revertBrowserId: browserId,
-      });
-      if (!prepared) {
-        return;
-      }
-
-      const nextConfig: AppConfig = {
-        ...currentConfig,
-        browsers: currentConfig.browsers.map((browser) =>
-          browser.id === browserId ? prepared.browser : browser,
-        ),
-      };
-      configRef.current = nextConfig;
-      setConfig(nextConfig);
-      await persistConfig(nextConfig, {
-        successText: `Updated manual browser "${prepared.browser.name}".`,
-        errorPrefix: "Could not save browser changes",
-      });
-    } finally {
-      setIsConfirmingManualBrowser(false);
-    }
-  }
-
-  function updateRule(ruleId: string, patch: Partial<RuleConfig>) {
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      rules: current.rules.map((rule) =>
-        rule.id === ruleId ? { ...rule, ...patch } : rule,
-      ),
-    }));
-    if (!nextConfig) {
-      return;
-    }
-
-    setDirtyRuleIds((current) => {
-      const next = cloneSet(current);
-      next.add(ruleId);
-      return next;
-    });
-  }
-
-  function saveRule(ruleId: string) {
-    const currentConfig = configRef.current;
-    if (!currentConfig) {
-      return;
-    }
-
-    const rule = currentConfig.rules.find((item) => item.id === ruleId);
-    if (!rule) {
-      return;
-    }
-
-    if (!rule.pattern.trim()) {
-      setStatus({ kind: "error", text: "Rule pattern cannot be empty." });
-      return;
-    }
-
-    if (!rule.browserId) {
-      setStatus({ kind: "error", text: "Select a browser for this rule." });
-      return;
-    }
-
-    if (rule.patternType === "regex" && regexErrors[rule.id]) {
-      setStatus({
-        kind: "error",
-        text: "Fix this rule's regex before saving.",
-      });
-      return;
-    }
-
-    setSavingRuleIds((current) => {
-      const next = cloneSet(current);
-      next.add(ruleId);
-      return next;
-    });
-
-    void persistConfig(currentConfig, {
-      successText: "Rule saved.",
-      errorPrefix: "Could not save rule",
-      onSuccess: () => {
-        setDirtyRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
-        setSavingRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
-      },
-      onError: () => {
-        setSavingRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
-      },
-    });
-  }
-
-  function deleteRule(ruleId: string) {
-    const nextConfig = applyConfigChange((current) => ({
-      ...current,
-      rules: current.rules.filter((rule) => rule.id !== ruleId),
-    }));
-    if (!nextConfig) {
-      return;
-    }
-
-    setDirtyRuleIds((current) => {
-      if (!current.has(ruleId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(ruleId);
-      return next;
-    });
-
-    void persistConfig(nextConfig, {
-      successText: "Rule deleted.",
-      errorPrefix: "Could not delete rule",
-    });
-  }
-
-  function requestDeleteRule(ruleId: string) {
-    const currentConfig = configRef.current;
-    const ruleIndex = currentConfig?.rules.findIndex(
-      (item) => item.id === ruleId,
-    );
-    if (!currentConfig || ruleIndex === undefined || ruleIndex < 0) {
-      return;
-    }
-
-    const rule = currentConfig.rules[ruleIndex];
-    setDeleteConfirmation({
-      kind: "rule",
-      ruleId,
-      ruleLabel: `Rule ${ruleIndex + 1}`,
-      pattern: rule.pattern,
-    });
   }
 
   function confirmDelete() {
@@ -1400,110 +313,6 @@ function App() {
     deleteRule(confirmation.ruleId);
   }
 
-  function moveRule(ruleId: string, direction: -1 | 1) {
-    let didMove = false;
-    const nextConfig = applyConfigChange((current) => {
-      const index = current.rules.findIndex((rule) => rule.id === ruleId);
-      if (index < 0) {
-        return current;
-      }
-
-      const destination = index + direction;
-      if (destination < 0 || destination >= current.rules.length) {
-        return current;
-      }
-
-      const nextRules = [...current.rules];
-      [nextRules[index], nextRules[destination]] = [
-        nextRules[destination],
-        nextRules[index],
-      ];
-      didMove = true;
-
-      return { ...current, rules: nextRules };
-    });
-    if (!nextConfig || !didMove) {
-      return;
-    }
-
-    void persistConfig(nextConfig, {
-      successText: "Rule order updated.",
-      errorPrefix: "Could not reorder rules",
-    });
-  }
-
-  async function addRule() {
-    if (!config) {
-      return;
-    }
-
-    const pattern = ruleDraft.pattern.trim();
-    if (!pattern) {
-      setStatus({ kind: "error", text: "Rule pattern cannot be empty." });
-      return;
-    }
-
-    if (!ruleDraft.browserId) {
-      setStatus({ kind: "error", text: "Select a browser for this rule." });
-      return;
-    }
-
-    if (ruleDraft.patternType === "regex") {
-      try {
-        new RegExp(pattern);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus({ kind: "error", text: `Regex is invalid: ${message}` });
-        return;
-      }
-    }
-
-    const rule: RuleConfig = {
-      id: createRuleId(),
-      pattern,
-      patternType: ruleDraft.patternType,
-      browserId: ruleDraft.browserId,
-      privateMode: ruleDraft.privateMode,
-      enabled: true,
-    };
-
-    const nextConfig: AppConfig = {
-      ...config,
-      rules: [...config.rules, rule],
-    };
-
-    configRef.current = nextConfig;
-    setConfig(nextConfig);
-    try {
-      await persistConfig(nextConfig, {
-        successText: "Rule added and saved.",
-        errorPrefix: "Could not save new rule",
-      });
-      setRuleDraft((current) => ({ ...current, pattern: "" }));
-      setFormModal(null);
-    } catch {
-      setConfig(config);
-      configRef.current = config;
-    }
-  }
-
-  async function openDefaultAppsSettings() {
-    try {
-      await openWindowsDefaultApps();
-      setStatus({
-        kind: "success",
-        text: "Opened Windows Default Apps settings.",
-      });
-      await refreshRegistrationStatus();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not open Windows settings: ${message}`,
-      });
-    }
-  }
-
   async function openConfigurationFolder() {
     try {
       await openConfigFolder();
@@ -1517,43 +326,6 @@ function App() {
         kind: "error",
         text: `Could not open config folder: ${message}`,
       });
-    }
-  }
-
-  async function registerBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await registerHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops was registered in Windows Default Apps. Now pick Hops for HTTP and HTTPS in Windows settings.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ kind: "error", text: `Could not register Hops: ${message}` });
-    } finally {
-      setIsRegistering(false);
-    }
-  }
-
-  async function unregisterBrowserIntegration() {
-    setIsRegistering(true);
-    try {
-      const next = await unregisterHopsAsBrowser();
-      setRegistrationStatus(next);
-      setStatus({
-        kind: "success",
-        text: "Hops registration keys were removed from your user profile.",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not unregister Hops: ${message}`,
-      });
-    } finally {
-      setIsRegistering(false);
     }
   }
 
@@ -1619,13 +391,9 @@ function App() {
       const reset = await resetConfig();
       setSettingsActionPanel("none");
       applyLoadedConfig(reset);
-      setDirtyRuleIds(new Set());
-      setSavingRuleIds(new Set());
-      setPendingBrowserIds(new Set());
-      setSavingBrowserIds(new Set());
-      setFailedBrowserIds(new Set());
+      resetRuleEditState();
+      resetBrowserEditState();
       setRouteDecision(null);
-      setBrowserDraft({ name: "", path: "", privateFlag: "" });
       setStatus({
         kind: "success",
         text: "Configuration reset. Rules and manual browsers were cleared, and detected browsers were restored.",
@@ -1745,80 +513,6 @@ function App() {
     }
   }
 
-  async function refreshAbout(showResultStatus = true) {
-    setIsCheckingUpdate(true);
-    try {
-      const [nextAboutInfo, nextUpdateStatus] = await Promise.all([
-        getAppAboutInfo(),
-        checkForAppUpdate(),
-      ]);
-      setAboutInfo(nextAboutInfo);
-      setUpdateStatus(nextUpdateStatus);
-
-      if (showResultStatus) {
-        setStatus({
-          kind: nextUpdateStatus.available ? "warning" : "success",
-          text: nextUpdateStatus.available
-            ? `Hops ${nextUpdateStatus.version} is available.`
-            : "Hops is up to date.",
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not check for updates: ${message}`,
-      });
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function refreshStatusBarUpdate() {
-    setIsCheckingUpdate(true);
-    try {
-      const nextUpdateStatus = await checkForAppUpdate();
-      setUpdateStatus(nextUpdateStatus);
-
-      const updateVersionKey = nextUpdateStatus.version ?? "unknown";
-      if (
-        nextUpdateStatus.available &&
-        !notifiedUpdateVersionsRef.current.has(updateVersionKey)
-      ) {
-        notifiedUpdateVersionsRef.current.add(updateVersionKey);
-        try {
-          await notifyAppUpdateAvailable(nextUpdateStatus);
-        } catch (error) {
-          console.warn("Could not show update notification.", error);
-        }
-      }
-    } catch (error) {
-      console.warn("Could not check for updates.", error);
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  }
-
-  async function updateApp() {
-    setIsInstallingUpdate(true);
-    try {
-      const installed = await installAvailableUpdate();
-
-      if (!installed) {
-        setStatus({ kind: "success", text: "Hops is already up to date." });
-        await refreshAbout(false);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({
-        kind: "error",
-        text: `Could not install update: ${message}`,
-      });
-    } finally {
-      setIsInstallingUpdate(false);
-    }
-  }
-
   function scrollCurrentPageToTop() {
     contentAreaRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
@@ -1864,251 +558,46 @@ function App() {
 
   const activeFormModal =
     formModal === "manual-browser" ? (
-      <ModalShell
-        title={<h3 id="manual-browser-title">Add manual browser</h3>}
-        titleId="manual-browser-title"
+      <AddBrowserModal
+        browserDraft={browserDraft}
+        isSaving={isSaving}
+        onSetBrowserDraft={setBrowserDraft}
+        onAdd={() => void addManualBrowser()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Name
-          <input
-            value={browserDraft.name}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                name: value,
-              }));
-            }}
-            placeholder="Portable Chrome"
-          />
-        </label>
-        <label>
-          Executable path
-          <input
-            value={browserDraft.path}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                path: value,
-              }));
-            }}
-            placeholder="C:\\Tools\\Chrome\\chrome.exe"
-          />
-        </label>
-        <label>
-          Private mode flag
-          <input
-            value={browserDraft.privateFlag}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setBrowserDraft((current) => ({
-                ...current,
-                privateFlag: value,
-              }));
-            }}
-            placeholder="--incognito"
-          />
-        </label>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addManualBrowser()}
-            disabled={isSaving}
-          >
-            Add browser
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : formModal === "rule" ? (
-      <ModalShell
-        title={
-          <div>
-            <h3 id="rule-modal-title">Add rule</h3>
-            <p className="setting-help">New rules are created as enabled.</p>
-          </div>
-        }
-        titleId="rule-modal-title"
+      <AddRuleModal
+        ruleDraft={ruleDraft}
+        visibleBrowsers={visibleBrowsers}
+        isSaving={isSaving}
+        onSetRuleDraft={setRuleDraft}
+        onAdd={() => void addRule()}
         onClose={() => setFormModal(null)}
-      >
-        <label>
-          Pattern
-          <input
-            value={ruleDraft.pattern}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                pattern: value,
-              }));
-            }}
-            placeholder="*.notion.so"
-          />
-        </label>
-        <PatternTypePicker
-          name="new-rule-pattern-type"
-          value={ruleDraft.patternType}
-          onChange={(value) =>
-            setRuleDraft((current) => ({
-              ...current,
-              patternType: value,
-            }))
-          }
-        />
-        <label>
-          Browser
-          <select
-            value={ruleDraft.browserId}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setRuleDraft((current) => ({
-                ...current,
-                browserId: value,
-              }));
-            }}
-          >
-            <option value="">Choose browser</option>
-            {visibleBrowsers.map((browser) => (
-              <option key={browser.id} value={browser.id}>
-                {browser.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="dual-toggle">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={ruleDraft.privateMode}
-              onChange={(event) => {
-                const checked = event.currentTarget.checked;
-                setRuleDraft((current) => ({
-                  ...current,
-                  privateMode: checked,
-                }));
-              }}
-            />
-            <span>Private mode</span>
-          </label>
-        </div>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={() => void addRule()}
-            disabled={isSaving || !visibleBrowsers.length}
-          >
-            Add rule
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setFormModal(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      </ModalShell>
+      />
     ) : null;
 
   const manualBrowserConfirmationModal = manualBrowserConfirmation ? (
-    <ModalShell
-      title={<h3 id="manual-browser-confirm-title">Confirm manual browser</h3>}
-      titleId="manual-browser-confirm-title"
+    <ManualBrowserConfirmModal
+      confirmation={manualBrowserConfirmation}
+      isConfirming={isConfirmingManualBrowser}
+      onConfirm={() => void confirmManualBrowser()}
       onClose={() => setManualBrowserConfirmation(null)}
-    >
-      <p className="setting-help">
-        {manualBrowserConfirmation.validation.message}
-      </p>
-      <label>
-        Executable path
-        <input value={manualBrowserConfirmation.browser.path} readOnly />
-      </label>
-      <label>
-        Name
-        <input value={manualBrowserConfirmation.browser.name} readOnly />
-      </label>
-      <div className="inline-actions">
-        <button
-          type="button"
-          onClick={() => void confirmManualBrowser()}
-          disabled={isConfirmingManualBrowser}
-        >
-          {isConfirmingManualBrowser ? "Confirming..." : "Confirm and trust"}
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          disabled={isConfirmingManualBrowser}
-          onClick={() => setManualBrowserConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const deleteConfirmationModal = deleteConfirmation ? (
-    <ModalShell
-      title={<h3 id="delete-confirm-title">Confirm delete</h3>}
-      titleId="delete-confirm-title"
+    <DeleteConfirmModal
+      confirmation={deleteConfirmation}
+      onConfirm={confirmDelete}
       onClose={() => setDeleteConfirmation(null)}
-    >
-      {deleteConfirmation.kind === "manual-browser" ? (
-        <p className="setting-help">
-          Delete manual browser "{deleteConfirmation.browserName}"? This also
-          removes{" "}
-          {deleteConfirmation.affectedRuleCount === 0
-            ? "no rules"
-            : deleteConfirmation.affectedRuleCount === 1
-              ? "1 rule that targets it"
-              : `${deleteConfirmation.affectedRuleCount} rules that target it`}
-          .
-        </p>
-      ) : (
-        <p className="setting-help">
-          Delete {deleteConfirmation.ruleLabel}
-          {deleteConfirmation.pattern.trim()
-            ? ` for "${deleteConfirmation.pattern}"`
-            : ""}
-          ? This cannot be undone.
-        </p>
-      )}
-      <div className="inline-actions">
-        <button type="button" className="danger" onClick={confirmDelete}>
-          Delete
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => setDeleteConfirmation(null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   const feedbackModalElement = feedbackModal ? (
-    <ModalShell
-      title={<h3 id="feedback-modal-title">{feedbackModal.title}</h3>}
-      titleId="feedback-modal-title"
+    <FeedbackModal
+      feedback={feedbackModal}
       onClose={() => setFeedbackModal(null)}
-    >
-      <p className={`status ${feedbackModal.kind}`}>{feedbackModal.message}</p>
-      <div className="inline-actions">
-        <button type="button" onClick={() => setFeedbackModal(null)}>
-          {feedbackModal.confirmLabel ?? "OK"}
-        </button>
-      </div>
-    </ModalShell>
+    />
   ) : null;
 
   if (isLoading) {

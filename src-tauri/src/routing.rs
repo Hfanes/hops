@@ -1,18 +1,23 @@
-use crate::browsers::{validate_browser_for_launch, RunningProcessSnapshot};
+use crate::browsers::{
+    current_running_processes, validate_browser_for_launch, RunningProcessSnapshot,
+};
 use crate::models::{
-    AppConfig, BrowserConfig, RouteAction, RouteDecision, RuleConfig, RulePatternType,
+    AppConfig, BrowserConfig, RouteAction, RouteDecision, RouteReason, RuleConfig, RulePatternType,
 };
 #[cfg(target_os = "windows")]
 use crate::CREATE_NO_WINDOW;
-use globset::GlobBuilder;
+use globset::{GlobBuilder, GlobMatcher};
 use regex::Regex;
+use std::cell::OnceCell;
+use std::collections::HashMap;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use url::Url;
 
 pub(crate) fn resolve_route(config: &AppConfig, url: &str) -> Result<RouteDecision, String> {
-    let mut running = RunningProcessSnapshot::current();
+    let mut running = current_running_processes(&config.browsers);
     resolve_route_with_running_processes(config, url, &mut running)
 }
 
@@ -25,11 +30,17 @@ where
     F: FnMut() -> std::collections::HashSet<String>,
 {
     if config.always_show_picker {
-        return Ok(picker_decision("always_show_picker"));
+        return Ok(picker_decision(RouteReason::AlwaysShowPicker));
     }
 
+    // Normalize once: this is the exact URL the browser will receive. Both
+    // targets are built once per URL, not once per rule.
+    let normalized_url = normalized_match_url(url);
+    let raw_target = MatchTarget::new(url);
+    let normalized_target = normalized_url.as_deref().map(MatchTarget::new);
+
     for rule in config.rules.iter().filter(|rule| rule.enabled) {
-        if !rule_matches(rule, url) {
+        if !rule_matches_targets(rule, &raw_target, normalized_target.as_ref()) {
             continue;
         }
 
@@ -47,7 +58,7 @@ where
                 browser,
                 rule.private_mode,
                 Some(rule.id.clone()),
-                "rule_match_running",
+                RouteReason::RuleMatchRunning,
             ));
         }
 
@@ -62,7 +73,7 @@ where
                         default_browser,
                         rule.private_mode,
                         Some(rule.id.clone()),
-                        "rule_browser_not_running_use_default",
+                        RouteReason::RuleBrowserNotRunningUseDefault,
                     ));
                 }
             }
@@ -71,7 +82,7 @@ where
                 browser,
                 rule.private_mode,
                 Some(rule.id.clone()),
-                "rule_browser_not_running_no_default",
+                RouteReason::RuleBrowserNotRunningNoDefault,
             ));
         }
 
@@ -79,7 +90,7 @@ where
             browser,
             rule.private_mode,
             Some(rule.id.clone()),
-            "rule_browser_not_running",
+            RouteReason::RuleBrowserNotRunning,
         ));
     }
 
@@ -89,42 +100,228 @@ where
             .iter()
             .find(|browser| &browser.id == default_browser_id && !browser.is_hidden)
         else {
-            return Ok(picker_decision("default_browser_missing"));
+            return Ok(picker_decision(RouteReason::DefaultBrowserMissing));
         };
 
         if config.use_defaults_when_not_running || running.is_browser_running(browser) {
-            return Ok(open_decision(browser, false, None, "default_browser"));
+            return Ok(open_decision(
+                browser,
+                false,
+                None,
+                RouteReason::DefaultBrowser,
+            ));
         }
 
-        return Ok(picker_decision("default_browser_not_running"));
+        return Ok(picker_decision(RouteReason::DefaultBrowserNotRunning));
     }
 
-    Ok(picker_decision("no_match"))
+    Ok(picker_decision(RouteReason::NoMatch))
 }
 
+/// The URL as `open_url_with_browser` will launch it, when it differs from the
+/// trimmed input. `None` when the input is not a valid http(s) URL or is
+/// already in normalized form.
+fn normalized_match_url(url: &str) -> Option<String> {
+    let normalized = normalize_http_url(url).ok()?.to_string();
+    (normalized != url).then_some(normalized)
+}
+
+/// Matches a rule against the incoming URL and its normalized form.
+///
+/// The normalized form is what the browser receives (lowercase scheme and
+/// host, `/` for an empty path), so rules written against it must match. The
+/// original is still tried so no rule that matched before stops matching,
+/// e.g. a regex written against non-ASCII characters that normalization
+/// percent-encodes.
+#[cfg(test)]
+pub(crate) fn rule_matches_url(rule: &RuleConfig, url: &str, normalized_url: Option<&str>) -> bool {
+    rule_matches_targets(
+        rule,
+        &MatchTarget::new(url),
+        normalized_url.map(MatchTarget::new).as_ref(),
+    )
+}
+
+fn rule_matches_targets(
+    rule: &RuleConfig,
+    raw: &MatchTarget<'_>,
+    normalized: Option<&MatchTarget<'_>>,
+) -> bool {
+    normalized.is_some_and(|normalized| rule_matches_target(rule, normalized))
+        || rule_matches_target(rule, raw)
+}
+
+#[cfg(test)]
 pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
+    rule_matches_target(rule, &MatchTarget::new(url))
+}
+
+/// A URL being matched, with the derived values rules need computed at most
+/// once per URL (and only if some rule asks for them).
+struct MatchTarget<'a> {
+    url: &'a str,
+    lowercase: OnceCell<String>,
+    hostname: OnceCell<Option<String>>,
+}
+
+impl<'a> MatchTarget<'a> {
+    fn new(url: &'a str) -> Self {
+        Self {
+            url,
+            lowercase: OnceCell::new(),
+            hostname: OnceCell::new(),
+        }
+    }
+
+    fn lowercase(&self) -> &str {
+        self.lowercase.get_or_init(|| self.url.to_lowercase())
+    }
+
+    fn hostname(&self) -> Option<&str> {
+        self.hostname
+            .get_or_init(|| extract_hostname(self.url))
+            .as_deref()
+    }
+}
+
+fn rule_matches_target(rule: &RuleConfig, target: &MatchTarget<'_>) -> bool {
     let pattern = rule.pattern.trim();
     if pattern.is_empty() {
         return false;
     }
 
+    let url = target.url;
     match rule.pattern_type {
-        RulePatternType::Hostname => extract_hostname(url)
+        RulePatternType::Hostname => target
+            .hostname()
             .is_some_and(|hostname| hostname.eq_ignore_ascii_case(&pattern.to_lowercase())),
         RulePatternType::HostnameSubdomains => {
             let domain = pattern.trim_start_matches("*.").to_lowercase();
-            extract_hostname(url).is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
+            target
+                .hostname()
+                .is_some_and(|hostname| hostname.ends_with(&format!(".{domain}")))
         }
-        RulePatternType::Prefix => url.starts_with(pattern),
-        RulePatternType::Contains => url.to_lowercase().contains(&pattern.to_lowercase()),
-        RulePatternType::FullUrl => url == pattern,
-        RulePatternType::Glob => GlobBuilder::new(pattern)
-            .case_insensitive(true)
-            .build()
-            .ok()
-            .is_some_and(|glob| glob.compile_matcher().is_match(url)),
-        RulePatternType::Regex => Regex::new(pattern).is_ok_and(|regex| regex.is_match(url)),
+        // Scheme and host are case-insensitive on the web; the rest stays exact.
+        RulePatternType::Prefix => {
+            url.starts_with(pattern) || url.starts_with(&lowercase_scheme_and_host(pattern))
+        }
+        RulePatternType::Contains => target.lowercase().contains(&pattern.to_lowercase()),
+        RulePatternType::FullUrl => {
+            // Normalize the pattern the same way as the URL, so `https://Example.com`
+            // and `https://example.com/` are the same address. Fall back to the
+            // case-folded pattern when it is not a full URL on its own.
+            url == pattern
+                || url
+                    == normalize_http_url(pattern)
+                        .map(|parsed| parsed.to_string())
+                        .unwrap_or_else(|_| lowercase_scheme_and_host(pattern))
+        }
+        RulePatternType::Glob => compiled_glob(pattern).is_some_and(|glob| glob.is_match(url)),
+        RulePatternType::Regex => compiled_regex(pattern).is_some_and(|regex| regex.is_match(url)),
     }
+}
+
+/// Upper bound on cached patterns; editing rules over a long session cannot
+/// grow the cache without limit. Real configs stay far below it.
+const COMPILED_PATTERN_CACHE_LIMIT: usize = 256;
+
+/// Compiled glob and regex rule patterns, keyed by their trimmed source.
+///
+/// Compiling a regex costs far more than running it, and the same rules are
+/// checked for every incoming URL (twice, raw and normalized), so each pattern
+/// is compiled once. `None` caches invalid patterns, which never match.
+#[derive(Default)]
+struct CompiledPatterns {
+    globs: HashMap<String, Option<Arc<GlobMatcher>>>,
+    regexes: HashMap<String, Option<Arc<Regex>>>,
+}
+
+fn compiled_patterns() -> MutexGuard<'static, CompiledPatterns> {
+    static PATTERNS: OnceLock<Mutex<CompiledPatterns>> = OnceLock::new();
+    PATTERNS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Returns the cached value for `pattern`, compiling it (outside the lock) on
+/// first use.
+fn cached_pattern<T>(
+    pattern: &str,
+    map: fn(&mut CompiledPatterns) -> &mut HashMap<String, Option<Arc<T>>>,
+    compile: impl FnOnce(&str) -> Option<T>,
+) -> Option<Arc<T>> {
+    if let Some(cached) = map(&mut compiled_patterns()).get(pattern) {
+        return cached.clone();
+    }
+
+    let compiled = compile(pattern).map(Arc::new);
+    insert_bounded(
+        map(&mut compiled_patterns()),
+        pattern.to_string(),
+        compiled.clone(),
+    );
+    compiled
+}
+
+fn insert_bounded<V>(entries: &mut HashMap<String, V>, key: String, value: V) {
+    if entries.len() >= COMPILED_PATTERN_CACHE_LIMIT && !entries.contains_key(&key) {
+        entries.clear();
+    }
+    entries.insert(key, value);
+}
+
+fn compiled_glob(pattern: &str) -> Option<Arc<GlobMatcher>> {
+    cached_pattern(
+        pattern,
+        |patterns| &mut patterns.globs,
+        |pattern| {
+            GlobBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .ok()
+                .map(|glob| glob.compile_matcher())
+        },
+    )
+}
+
+fn compiled_regex(pattern: &str) -> Option<Arc<Regex>> {
+    cached_pattern(
+        pattern,
+        |patterns| &mut patterns.regexes,
+        |pattern| Regex::new(pattern).ok(),
+    )
+}
+
+/// Checks a regex rule pattern with the same engine and trimming that
+/// `rule_matches` uses, returning a single-line error message when invalid.
+pub(crate) fn regex_pattern_error(pattern: &str) -> Option<String> {
+    let error = Regex::new(pattern.trim()).err()?;
+    let message = error.to_string();
+
+    // regex::Error renders a multi-line caret diagram; keep only the summary line.
+    let summary = message
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("error: "))
+        .unwrap_or_else(|| message.trim());
+    Some(summary.to_string())
+}
+
+/// Lowercases the `scheme://host[:port]` part of a URL-like pattern and keeps
+/// the path, query, and fragment as written. Works on partial patterns such as
+/// `https://linear.app/my` that would not survive a full URL parse unchanged.
+fn lowercase_scheme_and_host(pattern: &str) -> String {
+    let Some(scheme_end) = pattern.find("://") else {
+        return pattern.to_string();
+    };
+    let authority_start = scheme_end + "://".len();
+    let authority_end = pattern[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(pattern.len(), |offset| authority_start + offset);
+
+    let mut result = pattern[..authority_end].to_lowercase();
+    result.push_str(&pattern[authority_end..]);
+    result
 }
 
 fn extract_hostname(url: &str) -> Option<String> {
@@ -169,11 +366,11 @@ fn open_decision(
     browser: &BrowserConfig,
     private_mode: bool,
     matched_rule_id: Option<String>,
-    reason: &str,
+    reason: RouteReason,
 ) -> RouteDecision {
     RouteDecision {
         action: RouteAction::OpenBrowser,
-        reason: reason.to_string(),
+        reason,
         browser_id: Some(browser.id.clone()),
         browser_name: Some(browser.name.clone()),
         private_mode,
@@ -181,10 +378,10 @@ fn open_decision(
     }
 }
 
-pub(crate) fn picker_decision(reason: &str) -> RouteDecision {
+pub(crate) fn picker_decision(reason: RouteReason) -> RouteDecision {
     RouteDecision {
         action: RouteAction::ShowPicker,
-        reason: reason.to_string(),
+        reason,
         browser_id: None,
         browser_name: None,
         private_mode: false,
@@ -196,11 +393,11 @@ fn picker_decision_for_browser(
     browser: &BrowserConfig,
     private_mode: bool,
     matched_rule_id: Option<String>,
-    reason: &str,
+    reason: RouteReason,
 ) -> RouteDecision {
     RouteDecision {
         action: RouteAction::ShowPicker,
-        reason: reason.to_string(),
+        reason,
         browser_id: Some(browser.id.clone()),
         browser_name: Some(browser.name.clone()),
         private_mode,
@@ -317,7 +514,7 @@ mod tests {
             resolve_route_with_empty_running_set(&config, "https://github.com/openai/codex");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "always_show_picker");
+        assert_eq!(decision.reason, RouteReason::AlwaysShowPicker);
         assert_eq!(scan_count, 0);
     }
 
@@ -358,6 +555,186 @@ mod tests {
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
     }
 
+    fn matches_incoming(rule: &RuleConfig, url: &str) -> bool {
+        rule_matches_url(rule, url, normalized_match_url(url).as_deref())
+    }
+
+    #[test]
+    fn full_url_matches_the_url_the_browser_receives() {
+        let rule = test_rule(RulePatternType::FullUrl, "https://example.com/");
+        assert!(matches_incoming(&rule, "https://example.com"));
+        assert!(matches_incoming(&rule, "HTTPS://Example.COM/"));
+
+        let rule = test_rule(RulePatternType::FullUrl, "https://Example.com");
+        assert!(matches_incoming(&rule, "https://example.com/"));
+    }
+
+    #[test]
+    fn full_url_keeps_path_and_query_exact() {
+        let rule = test_rule(RulePatternType::FullUrl, "https://app.example.com/a");
+        assert!(matches_incoming(&rule, "https://app.example.com/a"));
+        assert!(!matches_incoming(&rule, "https://app.example.com/A"));
+        assert!(!matches_incoming(&rule, "https://app.example.com/a?tab=1"));
+    }
+
+    #[test]
+    fn prefix_ignores_scheme_and_host_case_only() {
+        let rule = test_rule(RulePatternType::Prefix, "https://GitHub.com/openai");
+        assert!(matches_incoming(&rule, "https://github.com/openai/codex"));
+        assert!(matches_incoming(&rule, "HTTPS://GITHUB.COM/openai/codex"));
+        assert!(!matches_incoming(&rule, "https://github.com/OpenAI/codex"));
+        assert!(!matches_incoming(&rule, "https://github.com/other"));
+    }
+
+    #[test]
+    fn prefix_partial_pattern_still_matches() {
+        let rule = test_rule(RulePatternType::Prefix, "https://linear.app/my");
+        assert!(matches_incoming(
+            &rule,
+            "https://Linear.app/myteam/issue/ENG-1"
+        ));
+    }
+
+    #[test]
+    fn rules_written_against_the_raw_url_keep_matching() {
+        // Normalization percent-encodes the path; the raw form is still tried.
+        let rule = test_rule(RulePatternType::Regex, "/café$");
+        assert!(matches_incoming(&rule, "https://example.com/café"));
+
+        let rule = test_rule(RulePatternType::Contains, "café");
+        assert!(matches_incoming(&rule, "https://example.com/café"));
+    }
+
+    #[test]
+    fn lowercase_scheme_and_host_leaves_the_rest_untouched() {
+        assert_eq!(
+            lowercase_scheme_and_host("HTTPS://GitHub.com:8443/OpenAI?Q=1#Top"),
+            "https://github.com:8443/OpenAI?Q=1#Top"
+        );
+        assert_eq!(
+            lowercase_scheme_and_host("https://Linear.App"),
+            "https://linear.app"
+        );
+        assert_eq!(lowercase_scheme_and_host("Figma"), "Figma");
+    }
+
+    #[test]
+    fn resolve_route_matches_rule_against_normalized_url() {
+        let browser = manual_browser("chrome", "Chrome");
+        let mut rule = test_rule(RulePatternType::FullUrl, "https://example.com/");
+        rule.browser_id = browser.id.clone();
+        let mut config = test_app_config(vec![browser]);
+        config.rules.push(rule);
+
+        let (decision, _) = resolve_route_with_empty_running_set(&config, "https://EXAMPLE.com");
+
+        assert_eq!(decision.matched_rule_id.as_deref(), Some("test"));
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
+    }
+
+    #[test]
+    fn route_reasons_serialize_to_the_strings_the_frontend_expects() {
+        let expected = [
+            (RouteReason::AlwaysShowPicker, "always_show_picker"),
+            (RouteReason::RuleMatchRunning, "rule_match_running"),
+            (
+                RouteReason::RuleBrowserNotRunningUseDefault,
+                "rule_browser_not_running_use_default",
+            ),
+            (
+                RouteReason::RuleBrowserNotRunningNoDefault,
+                "rule_browser_not_running_no_default",
+            ),
+            (
+                RouteReason::RuleBrowserNotRunning,
+                "rule_browser_not_running",
+            ),
+            (
+                RouteReason::DefaultBrowserMissing,
+                "default_browser_missing",
+            ),
+            (RouteReason::DefaultBrowser, "default_browser"),
+            (
+                RouteReason::DefaultBrowserNotRunning,
+                "default_browser_not_running",
+            ),
+            (RouteReason::NoMatch, "no_match"),
+            (RouteReason::CtrlShiftClick, "ctrl_shift_click"),
+            (RouteReason::ManualOpen, "manual_open"),
+        ];
+
+        for (reason, text) in expected {
+            let json = serde_json::to_string(&reason).expect("reason should serialize");
+            assert_eq!(json, format!("\"{text}\""));
+            let parsed: RouteReason = serde_json::from_str(&json).expect("reason should parse");
+            assert_eq!(parsed, reason);
+        }
+    }
+
+    #[test]
+    fn compiled_patterns_are_reused_across_urls() {
+        let regex_a = compiled_regex(r"^https://cache-test\.example/reuse").expect("valid regex");
+        let regex_b = compiled_regex(r"^https://cache-test\.example/reuse").expect("valid regex");
+        assert!(Arc::ptr_eq(&regex_a, &regex_b));
+
+        let glob_a = compiled_glob("https://cache-test.*/reuse/*").expect("valid glob");
+        let glob_b = compiled_glob("https://cache-test.*/reuse/*").expect("valid glob");
+        assert!(Arc::ptr_eq(&glob_a, &glob_b));
+    }
+
+    #[test]
+    fn invalid_patterns_are_cached_and_never_match() {
+        assert!(compiled_regex("(cache-test-unclosed").is_none());
+        assert!(compiled_regex("(cache-test-unclosed").is_none());
+
+        let rule = test_rule(RulePatternType::Regex, "(cache-test-unclosed");
+        assert!(!rule_matches(
+            &rule,
+            "https://example.com/(cache-test-unclosed"
+        ));
+    }
+
+    #[test]
+    fn pattern_cache_is_bounded() {
+        let mut entries = HashMap::new();
+        for index in 0..COMPILED_PATTERN_CACHE_LIMIT {
+            insert_bounded(&mut entries, format!("pattern-{index}"), index);
+        }
+        assert_eq!(entries.len(), COMPILED_PATTERN_CACHE_LIMIT);
+
+        // Re-inserting a known key never clears the cache.
+        insert_bounded(&mut entries, "pattern-0".to_string(), 0);
+        assert_eq!(entries.len(), COMPILED_PATTERN_CACHE_LIMIT);
+
+        insert_bounded(&mut entries, "one-too-many".to_string(), 0);
+        assert_eq!(entries.len(), 1);
+        assert!(entries.contains_key("one-too-many"));
+    }
+
+    #[test]
+    fn match_target_computes_hostname_and_lowercase_lazily() {
+        let target = MatchTarget::new("https://GitHub.com/OpenAI");
+        assert!(target.hostname.get().is_none());
+        assert!(target.lowercase.get().is_none());
+
+        assert_eq!(target.hostname(), Some("github.com"));
+        assert_eq!(target.lowercase(), "https://github.com/openai");
+        assert!(target.hostname.get().is_some());
+        assert!(target.lowercase.get().is_some());
+    }
+
+    #[test]
+    fn regex_pattern_error_uses_rust_regex_syntax() {
+        // Valid in Rust's regex crate (rejected by JavaScript's RegExp).
+        assert_eq!(regex_pattern_error(r"(?i)^https://github\.com/"), None);
+        // Valid in JavaScript's RegExp but unsupported by Rust's regex crate.
+        let look_ahead = regex_pattern_error(r"^https://(?=www\.)").expect("look-around rejected");
+        assert!(look_ahead.contains("look-around"), "{look_ahead}");
+        assert!(!look_ahead.contains('\n'), "{look_ahead}");
+        assert!(regex_pattern_error(r"(\w+)\1").is_some());
+        assert!(regex_pattern_error("(").is_some());
+    }
+
     #[test]
     fn private_rule_picker_decision_preserves_rule_browser_and_private_mode() {
         let browser = manual_browser("brave", "Brave");
@@ -374,7 +751,7 @@ mod tests {
         assert_eq!(decision.action, RouteAction::ShowPicker);
         assert_eq!(decision.browser_id.as_deref(), Some(browser.id.as_str()));
         assert!(decision.private_mode);
-        assert_eq!(decision.reason, "rule_browser_not_running");
+        assert_eq!(decision.reason, RouteReason::RuleBrowserNotRunning);
         assert_eq!(scan_count, 1);
     }
 
@@ -400,7 +777,10 @@ mod tests {
             Some(default_browser.id.as_str())
         );
         assert!(decision.private_mode);
-        assert_eq!(decision.reason, "rule_browser_not_running_use_default");
+        assert_eq!(
+            decision.reason,
+            RouteReason::RuleBrowserNotRunningUseDefault
+        );
         assert_eq!(scan_count, 1);
     }
 
@@ -416,7 +796,7 @@ mod tests {
 
         assert_eq!(decision.action, RouteAction::OpenBrowser);
         assert_eq!(decision.browser_id.as_deref(), Some("chrome"));
-        assert_eq!(decision.reason, "default_browser");
+        assert_eq!(decision.reason, RouteReason::DefaultBrowser);
         assert_eq!(scan_count, 0);
     }
 
@@ -433,7 +813,7 @@ mod tests {
             resolve_route_with_empty_running_set(&config, "https://example.com");
 
         assert_eq!(decision.action, RouteAction::ShowPicker);
-        assert_eq!(decision.reason, "no_match");
+        assert_eq!(decision.reason, RouteReason::NoMatch);
         assert_eq!(scan_count, 0);
     }
 }

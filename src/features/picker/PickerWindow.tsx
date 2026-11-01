@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { FiLock } from "react-icons/fi";
+import { FiLock, FiX } from "react-icons/fi";
 import { getPickerState, hidePickerWindow, openUrl } from "../../services/picker";
 import type { PickerSession, ThemePreference } from "../../types";
 import { PickerBrowserList } from "./PickerBrowserList";
@@ -161,6 +161,17 @@ function PickerWindow() {
             <p>Hops Picker</p>
             <span>{session?.source === "manual" ? "Manual launch" : "Route decision"}</span>
           </div>
+          {/* Mouse-only way out: Escape and click-outside need keyboard focus,
+              which Windows does not always grant to the picker. */}
+          <button
+            type="button"
+            className="picker-close"
+            onClick={() => void hidePickerWindow()}
+            aria-label="Close picker"
+            title="Close (Esc)"
+          >
+            <FiX aria-hidden="true" />
+          </button>
         </div>
 
         {session?.url ? (

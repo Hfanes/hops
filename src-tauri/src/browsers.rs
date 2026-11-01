@@ -3,10 +3,7 @@ use crate::models::{
     ManualBrowserValidationRequest, ManualBrowserValidationResult,
 };
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-#[cfg(not(target_os = "windows"))]
-use std::process::{Command, Stdio};
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -125,6 +122,19 @@ pub(crate) fn merge_detected_browsers(
     config: &mut AppConfig,
     detected_browsers: Vec<BrowserConfig>,
 ) {
+    // Match existing detected entries by path so their IDs (which rules and the
+    // default browser reference) survive refreshes even if ID generation changes.
+    let existing_detected_by_path: HashMap<String, (String, bool)> = config
+        .browsers
+        .iter()
+        .filter(|browser| browser.source == BrowserSource::Detected)
+        .map(|browser| {
+            (
+                normalize_path(&browser.path),
+                (browser.id.clone(), browser.is_hidden),
+            )
+        })
+        .collect();
     let hidden_by_detected_id: HashMap<String, bool> = config
         .browsers
         .iter()
@@ -147,14 +157,20 @@ pub(crate) fn merge_detected_browsers(
     let mut merged = manual_browsers;
 
     for mut browser in detected_browsers {
-        if manual_paths.contains(&normalize_path(&browser.path)) {
+        let normalized = normalize_path(&browser.path);
+        if manual_paths.contains(&normalized) {
             continue;
         }
 
-        browser.is_hidden = hidden_by_detected_id
-            .get(&browser.id)
-            .copied()
-            .unwrap_or(false);
+        if let Some((existing_id, is_hidden)) = existing_detected_by_path.get(&normalized) {
+            browser.id = existing_id.clone();
+            browser.is_hidden = *is_hidden;
+        } else {
+            browser.is_hidden = hidden_by_detected_id
+                .get(&browser.id)
+                .copied()
+                .unwrap_or(false);
+        }
         merged.push(browser);
     }
 
@@ -318,6 +334,25 @@ pub(crate) fn build_detected_browser(
     }
 }
 
+const HOPS_SELF_LAUNCH_ERROR: &str =
+    "Hops can't open links in itself. Pick a real browser instead.";
+
+/// Whether `path` points to Hops, which must never be used as a browser:
+/// Hops would hand each link back to itself and keep relaunching forever.
+///
+/// Matches the running executable's path, and also any `hops.exe`, so another
+/// copy of Hops (e.g. the installed app while a dev build runs) is caught too,
+/// since the two would just pass links back and forth.
+fn is_hops_executable(path: &str) -> bool {
+    let normalized = normalize_path(path.trim());
+    if normalized.rsplit('\\').next() == Some("hops.exe") {
+        return true;
+    }
+
+    std::env::current_exe()
+        .is_ok_and(|current| normalize_path(&current.to_string_lossy()) == normalized)
+}
+
 pub(crate) fn validate_browser_for_launch(
     browser: &BrowserConfig,
 ) -> Result<ValidatedBrowserLaunch, String> {
@@ -335,6 +370,10 @@ pub(crate) fn validate_browser_for_launch(
             "Browser '{}' must point to a .exe executable.",
             browser.name
         ));
+    }
+
+    if is_hops_executable(path) {
+        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
     }
 
     if !Path::new(path).exists() {
@@ -375,6 +414,10 @@ pub(crate) fn validate_manual_browser_request(
     #[cfg(target_os = "windows")]
     if !path.to_ascii_lowercase().ends_with(".exe") {
         return Err("Manual browser executable must be a .exe file.".to_string());
+    }
+
+    if is_hops_executable(path) {
+        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
     }
 
     if !Path::new(path).exists() {
@@ -921,10 +964,21 @@ fn known_install_paths(definition: &KnownBrowserDefinition) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Builds an ID from a 64-bit FNV-1a hash of the lowercased key.
+///
+/// FNV-1a is fixed by specification, unlike `DefaultHasher`, whose output may
+/// change between Rust releases and would silently orphan persisted rules.
 fn stable_id(prefix: &str, key: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    key.to_lowercase().hash(&mut hasher);
-    format!("{prefix}-{:016x}", hasher.finish())
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let hash = key
+        .to_lowercase()
+        .bytes()
+        .fold(FNV_OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+        });
+    format!("{prefix}-{hash:016x}")
 }
 
 fn normalize_path(path: &str) -> String {
@@ -938,8 +992,33 @@ fn executable_name_from_path(path: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+/// Lowercased executable file names (e.g. `chrome.exe`) of the given browsers.
+fn browser_executable_names(browsers: &[BrowserConfig]) -> HashSet<String> {
+    browsers
+        .iter()
+        .filter_map(|browser| {
+            normalize_path(browser.path.trim())
+                .rsplit('\\')
+                .next()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Normalized full paths of running processes that could be one of `browsers`.
+///
+/// The process snapshot already carries each executable's file name, so only
+/// processes whose name matches a configured browser are opened to read their
+/// full path. That turns hundreds of `OpenProcess` calls into a handful.
 #[cfg(target_os = "windows")]
-pub(crate) fn running_processes() -> Result<HashSet<String>, String> {
+pub(crate) fn running_processes(browsers: &[BrowserConfig]) -> Result<HashSet<String>, String> {
+    let wanted_names = browser_executable_names(browsers);
+    if wanted_names.is_empty() {
+        return Ok(HashSet::new());
+    }
+
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Err(
@@ -948,6 +1027,7 @@ pub(crate) fn running_processes() -> Result<HashSet<String>, String> {
     }
 
     let mut paths = HashSet::new();
+    let mut path_buffer = vec![0u16; 32768];
     let mut entry = PROCESSENTRY32W {
         dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
         ..unsafe { std::mem::zeroed() }
@@ -955,8 +1035,10 @@ pub(crate) fn running_processes() -> Result<HashSet<String>, String> {
 
     let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) != 0 };
     while has_entry {
-        if let Some(path) = query_process_image_path(entry.th32ProcessID) {
-            paths.insert(normalize_path(&path));
+        if process_entry_name_matches(&entry.szExeFile, &wanted_names) {
+            if let Some(path) = query_process_image_path(entry.th32ProcessID, &mut path_buffer) {
+                paths.insert(normalize_path(&path));
+            }
         }
 
         has_entry = unsafe { Process32NextW(snapshot, &mut entry) != 0 };
@@ -969,40 +1051,31 @@ pub(crate) fn running_processes() -> Result<HashSet<String>, String> {
     Ok(paths)
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+/// Whether a null-terminated UTF-16 executable name is in `wanted_names`
+/// (which holds lowercased names).
+fn process_entry_name_matches(exe_file: &[u16], wanted_names: &HashSet<String>) -> bool {
+    let length = exe_file
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(exe_file.len());
+    String::from_utf16(&exe_file[..length])
+        .is_ok_and(|name| wanted_names.contains(&name.to_lowercase()))
+}
+
+/// Hops only supports Windows; elsewhere no browser is reported as running.
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn running_processes() -> Result<HashSet<String>, String> {
-    let mut command = Command::new("tasklist");
-    command.stdin(Stdio::null()).stderr(Stdio::null());
-
-    let output = command
-        .args(["/FO", "CSV", "/NH"])
-        .output()
-        .map_err(|error| format!("Could not run tasklist to detect running browsers: {error}"))?;
-
-    if !output.status.success() {
-        return Err("tasklist failed while checking running browsers.".to_string());
-    }
-
-    let mut names = HashSet::new();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        if let Some(name) = parse_first_csv_column(line) {
-            names.insert(name.to_lowercase());
-        }
-    }
-
-    Ok(names)
+pub(crate) fn running_processes(_browsers: &[BrowserConfig]) -> Result<HashSet<String>, String> {
+    Ok(HashSet::new())
 }
 
 #[cfg(target_os = "windows")]
-fn query_process_image_path(process_id: u32) -> Option<String> {
+fn query_process_image_path(process_id: u32, buffer: &mut [u16]) -> Option<String> {
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
     if handle.is_null() {
         return None;
     }
 
-    let mut buffer = vec![0u16; 32768];
     let mut length = buffer.len() as u32;
     let success =
         unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
@@ -1016,24 +1089,6 @@ fn query_process_image_path(process_id: u32) -> Option<String> {
     }
 
     String::from_utf16(&buffer[..length as usize]).ok()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn parse_first_csv_column(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(stripped) = trimmed.strip_prefix('"') {
-        let end = stripped.find('"')?;
-        return Some(stripped[..end].to_string());
-    }
-
-    trimmed
-        .split(',')
-        .next()
-        .map(|value| value.trim_matches('"').to_string())
 }
 
 pub(crate) fn is_browser_running(
@@ -1052,14 +1107,12 @@ where
     load: F,
 }
 
-impl RunningProcessSnapshot<fn() -> HashSet<String>> {
-    pub(crate) fn current() -> Self {
-        fn load_running_processes() -> HashSet<String> {
-            running_processes().unwrap_or_default()
-        }
-
-        Self::new(load_running_processes)
-    }
+/// A lazy snapshot that scans only for the given browsers' executables, and
+/// only the first time a running state is actually needed.
+pub(crate) fn current_running_processes(
+    browsers: &[BrowserConfig],
+) -> RunningProcessSnapshot<impl FnMut() -> HashSet<String> + '_> {
+    RunningProcessSnapshot::new(move || running_processes(browsers).unwrap_or_default())
 }
 
 impl<F> RunningProcessSnapshot<F>
@@ -1277,6 +1330,39 @@ mod tests {
             config.browsers[0].private_flag.as_deref(),
             Some("--my-private")
         );
+    }
+
+    #[test]
+    fn stable_id_is_fixed_fnv1a_and_case_insensitive() {
+        // Pinned values: these must never change, or persisted rules lose their browser.
+        assert_eq!(stable_id("detected", ""), "detected-cbf29ce484222325");
+        assert_eq!(stable_id("detected", "a"), "detected-af63dc4c8601ec8c");
+        assert_eq!(
+            stable_id("detected", "C:\\Chrome.exe"),
+            stable_id("detected", "c:\\chrome.exe")
+        );
+    }
+
+    #[test]
+    fn refresh_keeps_existing_detected_browser_id_by_path() {
+        let path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+        let mut existing = build_detected_browser(path, Some("Google Chrome"), None);
+        existing.id = "detected-legacy-id".to_string();
+        existing.is_hidden = true;
+        let mut config = test_app_config(vec![existing]);
+
+        merge_detected_browsers(
+            &mut config,
+            vec![build_detected_browser(
+                "c:/program files/google/chrome/application/chrome.exe",
+                Some("Google Chrome"),
+                None,
+            )],
+        );
+
+        assert_eq!(config.browsers.len(), 1);
+        assert_eq!(config.browsers[0].id, "detected-legacy-id");
+        assert!(config.browsers[0].is_hidden);
     }
 
     #[test]
@@ -1506,6 +1592,120 @@ mod tests {
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+    }
+
+    fn browser_at(path: &str) -> BrowserConfig {
+        BrowserConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            path: path.to_string(),
+            private_flag: None,
+            icon_key: None,
+            manual_trust: None,
+            source: BrowserSource::Manual,
+            is_hidden: false,
+        }
+    }
+
+    fn utf16_exe_name(name: &str) -> [u16; 260] {
+        let mut buffer = [0u16; 260];
+        for (slot, unit) in buffer.iter_mut().zip(name.encode_utf16()) {
+            *slot = unit;
+        }
+        buffer
+    }
+
+    #[test]
+    fn browser_executable_names_are_lowercased_file_names() {
+        let names = browser_executable_names(&[
+            browser_at("C:\\Program Files\\Google\\Chrome\\Application\\Chrome.EXE"),
+            browser_at("  C:/Tools/Firefox/firefox.exe  "),
+            browser_at(""),
+        ]);
+
+        assert_eq!(
+            names,
+            HashSet::from(["chrome.exe".to_string(), "firefox.exe".to_string()])
+        );
+    }
+
+    #[test]
+    fn process_entry_name_matching_is_case_insensitive_and_stops_at_null() {
+        let wanted = HashSet::from(["chrome.exe".to_string()]);
+
+        assert!(process_entry_name_matches(
+            &utf16_exe_name("CHROME.exe"),
+            &wanted
+        ));
+        assert!(!process_entry_name_matches(
+            &utf16_exe_name("chrome.exe.bak"),
+            &wanted
+        ));
+        assert!(!process_entry_name_matches(
+            &utf16_exe_name("svchost.exe"),
+            &wanted
+        ));
+    }
+
+    #[test]
+    fn hops_executable_is_recognized_by_name_or_running_path() {
+        assert!(is_hops_executable(
+            "C:\\Users\\me\\AppData\\Local\\hops\\hops.exe"
+        ));
+        assert!(is_hops_executable(
+            "  C:/Projects/hops/src-tauri/target/debug/HOPS.EXE "
+        ));
+
+        let current_exe = std::env::current_exe().expect("current exe should resolve");
+        assert!(is_hops_executable(&current_exe.to_string_lossy()));
+
+        assert!(!is_hops_executable(
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        ));
+        assert!(!is_hops_executable("C:\\Games\\hopscotch.exe"));
+    }
+
+    #[test]
+    fn hops_cannot_be_added_or_launched_as_a_browser() {
+        let request = ManualBrowserValidationRequest {
+            name: "Hops".to_string(),
+            path: "C:\\Users\\me\\AppData\\Local\\hops\\hops.exe".to_string(),
+            private_flag: None,
+            allow_user_confirmed: true,
+        };
+        let error = validate_manual_browser_request(&request).expect_err("Hops must be rejected");
+        assert_eq!(error, HOPS_SELF_LAUNCH_ERROR);
+
+        // Configs saved before this check existed are refused at launch.
+        let mut browser = browser_at("C:\\Users\\me\\AppData\\Local\\hops\\hops.exe");
+        browser.manual_trust = Some(ManualBrowserTrust::UserConfirmed);
+        let error = validate_browser_for_launch(&browser).expect_err("Hops must not launch");
+        assert_eq!(error, HOPS_SELF_LAUNCH_ERROR);
+    }
+
+    #[test]
+    fn running_processes_skips_scan_without_browsers() {
+        assert!(running_processes(&[])
+            .expect("empty scan should succeed")
+            .is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn running_processes_finds_a_live_process_by_full_path() {
+        // The test binary itself is a running process we know the path of.
+        let current_exe = std::env::current_exe().expect("current exe should resolve");
+        let current_path = current_exe.to_string_lossy().to_string();
+
+        let running = running_processes(&[browser_at(&current_path)])
+            .expect("process snapshot should succeed");
+
+        assert!(is_browser_running(&browser_at(&current_path), &running));
+        // Only processes sharing the wanted executable name are resolved.
+        let wanted = browser_executable_names(&[browser_at(&current_path)]);
+        assert!(running.iter().all(|path| wanted
+            .iter()
+            .any(|name| path.ends_with(&format!("\\{name}")))));
     }
 
     #[cfg(target_os = "windows")]
