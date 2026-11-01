@@ -81,6 +81,35 @@ body.picker-body {
   min-width: 0;
 }
 
+.picker-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin-left: auto;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--picker-shadow);
+  border-radius: 0;
+  background: var(--picker-card);
+  color: var(--picker-text);
+  box-shadow: 3px 3px 0 var(--picker-shadow);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.picker-close:hover,
+.picker-close:focus-visible {
+  outline: none;
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--picker-shadow);
+}
+
+.picker-close:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--picker-shadow);
+}
+
 .picker-brand-copy p {
   margin: 0;
   color: var(--picker-text);
