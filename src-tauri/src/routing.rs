@@ -127,6 +127,20 @@ pub(crate) fn rule_matches(rule: &RuleConfig, url: &str) -> bool {
     }
 }
 
+/// Checks a regex rule pattern with the same engine and trimming that
+/// `rule_matches` uses, returning a single-line error message when invalid.
+pub(crate) fn regex_pattern_error(pattern: &str) -> Option<String> {
+    let error = Regex::new(pattern.trim()).err()?;
+    let message = error.to_string();
+
+    // regex::Error renders a multi-line caret diagram; keep only the summary line.
+    let summary = message
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("error: "))
+        .unwrap_or_else(|| message.trim());
+    Some(summary.to_string())
+}
+
 fn extract_hostname(url: &str) -> Option<String> {
     if let Ok(parsed) = Url::parse(url) {
         return parsed.host_str().map(|value| value.to_lowercase());
@@ -356,6 +370,18 @@ mod tests {
         );
         assert!(rule_matches(&rule, "https://youtube.com/watch?v=abc"));
         assert!(!rule_matches(&rule, "https://youtube.com/shorts/abc"));
+    }
+
+    #[test]
+    fn regex_pattern_error_uses_rust_regex_syntax() {
+        // Valid in Rust's regex crate (rejected by JavaScript's RegExp).
+        assert_eq!(regex_pattern_error(r"(?i)^https://github\.com/"), None);
+        // Valid in JavaScript's RegExp but unsupported by Rust's regex crate.
+        let look_ahead = regex_pattern_error(r"^https://(?=www\.)").expect("look-around rejected");
+        assert!(look_ahead.contains("look-around"), "{look_ahead}");
+        assert!(!look_ahead.contains('\n'), "{look_ahead}");
+        assert!(regex_pattern_error(r"(\w+)\1").is_some());
+        assert!(regex_pattern_error("(").is_some());
     }
 
     #[test]

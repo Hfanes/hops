@@ -19,7 +19,7 @@ use crate::registration::{
     register_hops_as_browser as register_hops_as_browser_internal,
     unregister_hops_as_browser as unregister_hops_as_browser_internal,
 };
-use crate::routing::{open_url_with_browser, resolve_route};
+use crate::routing::{open_url_with_browser, regex_pattern_error, resolve_route};
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -70,6 +70,16 @@ pub(crate) fn validate_manual_browser(
     request: ManualBrowserValidationRequest,
 ) -> Result<ManualBrowserValidationResult, String> {
     validate_manual_browser_request(&request)
+}
+
+/// Validates regex rule patterns with the same engine routing uses.
+/// Returns one entry per pattern, in order: `None` when valid, else the error.
+#[tauri::command(async)]
+pub(crate) fn validate_regex_patterns(patterns: Vec<String>) -> Vec<Option<String>> {
+    patterns
+        .iter()
+        .map(|pattern| regex_pattern_error(pattern))
+        .collect()
 }
 
 #[tauri::command(async)]

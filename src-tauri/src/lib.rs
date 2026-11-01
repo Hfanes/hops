@@ -122,6 +122,7 @@ pub fn run() {
             commands::open_config_folder,
             commands::save_config,
             commands::validate_manual_browser,
+            commands::validate_regex_patterns,
             commands::refresh_browsers,
             commands::list_running_browser_ids,
             commands::preview_route,
