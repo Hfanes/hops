@@ -68,6 +68,7 @@ pub(crate) fn register_hops_as_browser() -> Result<BrowserRegistrationStatus, St
     #[cfg(target_os = "windows")]
     {
         register_hops_as_browser_windows()?;
+        notify_file_associations_changed();
         browser_registration_status_windows()
     }
 
@@ -81,12 +82,29 @@ pub(crate) fn unregister_hops_as_browser() -> Result<BrowserRegistrationStatus, 
     #[cfg(target_os = "windows")]
     {
         unregister_hops_as_browser_windows()?;
+        notify_file_associations_changed();
         browser_registration_status_windows()
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         Err("Unregistering Hops as a browser is only supported on Windows.".to_string())
+    }
+}
+
+/// Tells Windows that file and URL associations changed, so Settings > Default
+/// apps and Explorer show Hops' new registration state without a sign-out.
+#[cfg(target_os = "windows")]
+fn notify_file_associations_changed() {
+    use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED as _,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
     }
 }
 
