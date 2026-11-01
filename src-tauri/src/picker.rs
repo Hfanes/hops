@@ -35,7 +35,12 @@ const WH_MOUSE_LL: i32 = 14;
 const HC_ACTION: i32 = 0;
 #[cfg(target_os = "windows")]
 const WM_LBUTTONDOWN: u32 = 0x0201;
-const PICKER_SHORTCUT_LATCH_DURATION: Duration = Duration::from_secs(30);
+/// How long a Ctrl+Shift click is remembered while its link reaches Hops.
+///
+/// A link forwarded to the running tray app arrives well within this. It is kept
+/// short so a Ctrl+Shift click on something that is not a link cannot force the
+/// picker for a different link opened later.
+const PICKER_SHORTCUT_LATCH_DURATION: Duration = Duration::from_secs(3);
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
@@ -1052,8 +1057,28 @@ mod tests {
         assert!(is_ctrl_shift_picker_trigger_active_with_latch(
             &state,
             || false,
-            now + Duration::from_secs(15)
+            now + PICKER_SHORTCUT_LATCH_DURATION / 2
         ));
+    }
+
+    #[test]
+    fn picker_shortcut_click_is_remembered_up_to_the_latch_duration() {
+        let state = PickerState::default();
+        let now = std::time::Instant::now();
+        state.remember_picker_shortcut_click_at(now);
+
+        assert!(is_ctrl_shift_picker_trigger_active_with_latch(
+            &state,
+            || false,
+            now + PICKER_SHORTCUT_LATCH_DURATION
+        ));
+    }
+
+    #[test]
+    fn picker_shortcut_latch_is_short() {
+        // A long latch lets an unrelated Ctrl+Shift click force the picker for a
+        // link opened much later.
+        assert!(PICKER_SHORTCUT_LATCH_DURATION <= Duration::from_secs(5));
     }
 
     #[test]
@@ -1065,7 +1090,7 @@ mod tests {
         assert!(!is_ctrl_shift_picker_trigger_active_with_latch(
             &state,
             || false,
-            now + Duration::from_millis(30_001)
+            now + PICKER_SHORTCUT_LATCH_DURATION + Duration::from_millis(1)
         ));
     }
 
