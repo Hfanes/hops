@@ -12,8 +12,7 @@ mod tray;
 use config::{load_or_init_config, ConfigCache};
 use picker::{
     extract_url_from_args, handle_incoming_url, hide_picker_window_internal, hide_settings_window,
-    install_picker_shortcut_observer, is_ctrl_shift_picker_trigger_currently_active,
-    show_settings_window, PickerState,
+    is_ctrl_shift_picker_trigger_currently_active, show_settings_window, PickerState,
 };
 use tray::setup_tray;
 
@@ -77,7 +76,6 @@ pub fn run() {
             }
 
             let state = app.state::<PickerState>();
-            install_picker_shortcut_observer(&state);
 
             let startup_url = extract_url_from_args(&initial_args);
 
