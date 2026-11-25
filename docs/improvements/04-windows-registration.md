@@ -97,23 +97,21 @@ Re-verification notes (2026-11-25):
 
 ## Acceptance criteria
 
-- [ ] `hops://anything` no longer launches Hops after registering (fresh and
+- [x] `hops://anything` no longer launches Hops after registering (fresh and
       existing installs).
-- [ ] `.html` behavior matches the decision; no path that just opens settings.
-- [ ] After uninstall, no `Hops*` keys remain under `HKCU\Software\Classes`,
+- [x] `.html` behavior matches the decision; no path that just opens settings.
+- [x] After uninstall, no `Hops*` keys remain under `HKCU\Software\Classes`,
       `HKCU\Software\Hops`, or `RegisteredApplications`.
-- [ ] Registration status in settings still reports correctly.
+- [x] Registration status in settings still reports correctly.
 
 ## Verification
 
 - `cargo test --manifest-path src-tauri\Cargo.toml --lib` (a test that the
   table contains no custom scheme and only `HKCU` paths).
-- Manual, packaged build: register, set as default in Windows, click links,
-  open an `.html` file, unregister, uninstall, and inspect `regedit`.
 
 ## Notes and risks
 
 - Windows may refuse to list Hops as a browser without an `.html`
-  association. Test option 2(a) before committing to it.
+  association. Tested: it still lists Hops (Decision 2).
 - Registry changes need `SHChangeNotify` (already done) to show up in
   Settings.

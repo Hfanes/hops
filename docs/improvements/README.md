@@ -64,7 +64,7 @@ the item's **Decisions** section.
 | 01 | [Command access per window](01-command-acl.md)                       | Implemented |
 | 02 | [Manual browser trust model](02-manual-browser-trust.md)             | Implemented |
 | 03 | [Config robustness](03-config-robustness.md)                         | Implemented |
-| 04 | [Windows registration](04-windows-registration.md)                   | Proposed    |
+| 04 | [Windows registration](04-windows-registration.md)                   | Implemented |
 | 05 | [Config location and concurrency](05-config-location-concurrency.md) | Proposed    |
 | 06 | [CI and release hardening](06-ci-release.md)                         | Proposed    |
 | 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed    |
