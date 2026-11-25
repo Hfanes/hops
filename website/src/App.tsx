@@ -128,7 +128,7 @@ function Hero() {
         <p className="hero-meta">
           Free and open source · Windows
           {downloadCount !== null &&
-            ` · ${downloadCount.toLocaleString("en-US")} downloads`}
+            ` · ${downloadCount.toLocaleString("en-US")} downloads & updates`}
         </p>
       </div>
     </section>
