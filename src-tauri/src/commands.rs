@@ -5,7 +5,7 @@ use crate::browsers::{
 use crate::config::{
     config_file_path, load_or_init_config, normalize_config, reset_config_with_detected_browsers,
     save_config_internal, take_config_recovery_notice as take_config_recovery_notice_internal,
-    validate_config,
+    update_config, validate_config,
 };
 use crate::models::{
     AppConfig, BrowserRegistrationStatus, ManualBrowserValidationRequest,
@@ -97,9 +97,10 @@ pub(crate) fn validate_regex_patterns(patterns: Vec<String>) -> Vec<Option<Strin
 
 #[tauri::command(async)]
 pub(crate) fn refresh_browsers(app: AppHandle) -> Result<AppConfig, String> {
-    let mut config = load_or_init_config(&app, false)?;
-    merge_detected_browsers(&mut config, detect_browsers());
-    save_config_internal(&app, config, false)
+    // Detect first: it reads the registry and disk, and the update holds the
+    // config lock that URL handling also waits for.
+    let detected = detect_browsers();
+    update_config(&app, |config| merge_detected_browsers(config, detected))
 }
 
 #[tauri::command(async)]

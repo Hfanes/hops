@@ -686,6 +686,7 @@ pub(crate) fn handle_incoming_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browsers::normalize_path;
     use crate::models::{
         BrowserConfig, BrowserSource, RuleConfig, RulePatternType, ThemePreference,
     };
@@ -752,7 +753,7 @@ mod tests {
         RunningProcessSnapshot::new(move || {
             running_paths
                 .iter()
-                .map(|path| path.trim().replace('/', "\\").to_lowercase())
+                .map(|path| normalize_path(path))
                 .collect()
         })
     }

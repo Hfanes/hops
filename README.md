@@ -212,7 +212,7 @@ If `Use defaults when browser is not already running` is enabled, Hops uses your
 
 ### Where is the config stored?
 
-Hops stores its config at `%APPDATA%\Hops\config.json`.
+Hops stores its config at `%LOCALAPPDATA%\com.hfa.hops\config.json`. Version 0.1.6 and earlier used `%APPDATA%\Hops\config.json`; on first start, Hops copies it to the new location and renames the old file to `config.json.migrated`.
 
 ## Pattern Examples
 
