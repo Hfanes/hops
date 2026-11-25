@@ -98,6 +98,13 @@ Agreed on 2026-11-25.
    errors are fixed in this branch; the three `too_many_arguments` functions in
    `picker.rs` get an `allow`, because splitting their arguments belongs to
    item 07.
+   The Rust steps (toolchain, cache, fmt, clippy, tests) only run when the PR
+   changes something under `src-tauri/` or `ci.yml` itself; manual runs always
+   run them. Why: on a cold cache they take about 4 minutes, and a PR that
+   only touches docs, the website or the frontend cannot break them. The job
+   always runs and only skips steps, because a required check that never
+   reports would block the merge. CI does not run on pushes to `main`, so each
+   new PR starts with a cold Rust cache; later pushes to the same PR reuse it.
    **Ruleset on `main`:** require the `checks` job (`CI / checks`) and the
    `version-check` job to pass before merging, with the repository owner
    allowed to bypass. "Require branches to be up to date" stays off. Why:
