@@ -3,6 +3,7 @@ import {
   FiDownload,
   FiGithub,
 } from "react-icons/fi";
+import { useDownloadCount } from "./useDownloadCount";
 
 const releaseUrl = "https://github.com/Hfanes/hops/releases/latest";
 const githubUrl = "https://github.com/Hfanes/hops";
@@ -85,6 +86,8 @@ function App() {
 }
 
 function Hero() {
+  const downloadCount = useDownloadCount();
+
   return (
     <section className="hero site-section">
       <div className="hero-inner">
@@ -124,6 +127,8 @@ function Hero() {
         </div>
         <p className="hero-meta">
           Free and open source · Windows
+          {downloadCount !== null &&
+            ` · ${downloadCount.toLocaleString("en-US")} downloads`}
         </p>
       </div>
     </section>
