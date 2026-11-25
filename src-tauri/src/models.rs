@@ -109,6 +109,8 @@ pub(crate) enum RouteReason {
     NoMatch,
     CtrlShiftClick,
     ManualOpen,
+    /// The routed browser could not be launched, e.g. it was uninstalled.
+    BrowserLaunchFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,4 +197,6 @@ pub(crate) struct PickerSession {
     pub(crate) always_show_picker: bool,
     pub(crate) alt_pressed: bool,
     pub(crate) browsers: Vec<PickerBrowserEntry>,
+    /// Shown above the browser list, e.g. why the routed browser did not open.
+    pub(crate) notice: Option<String>,
 }

@@ -312,3 +312,13 @@ body.picker-body {
   font-size: 12px;
   font-weight: 800;
 }
+
+.picker-notices {
+  display: grid;
+  gap: 8px;
+}
+
+/* Launch errors include the executable path, which has no spaces to wrap at. */
+.picker-notice {
+  overflow-wrap: anywhere;
+}

@@ -40,6 +40,14 @@ export function loadConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("load_config");
 }
 
+/**
+ * The one-time message about an invalid config.json that Hops backed up and
+ * replaced, or `null`. Reading it clears it.
+ */
+export function takeConfigRecoveryNotice(): Promise<string | null> {
+  return invoke<string | null>("take_config_recovery_notice");
+}
+
 export function getConfigFilePath(): Promise<string> {
   return invoke<string>("get_config_file_path");
 }
@@ -80,6 +88,11 @@ export function resetConfig(): Promise<AppConfig> {
 
 export function listRunningBrowserIds(): Promise<string[]> {
   return invoke<string[]>("list_running_browser_ids");
+}
+
+/** Browsers whose executable is no longer on disk. */
+export function listMissingBrowserIds(): Promise<string[]> {
+  return invoke<string[]>("list_missing_browser_ids");
 }
 
 export function previewRouteWithConfig(

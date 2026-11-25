@@ -181,11 +181,21 @@ function PickerWindow() {
           </header>
         ) : null}
 
-        {isAltPressed ? (
-          <p className="picker-hint">
-            <FiLock aria-hidden="true" />
-            Alt held: supported browsers will open in private mode.
-          </p>
+        {/* One grid row for both, so the list keeps its row. */}
+        {session?.notice || isAltPressed ? (
+          <div className="picker-notices">
+            {session?.notice ? (
+              <p className="picker-status picker-notice" role="status">
+                {session.notice}
+              </p>
+            ) : null}
+            {isAltPressed ? (
+              <p className="picker-hint">
+                <FiLock aria-hidden="true" />
+                Alt held: supported browsers will open in private mode.
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         <PickerBrowserList

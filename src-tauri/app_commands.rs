@@ -7,6 +7,7 @@
 // added to `invoke_handler` must also be added here and to a capability.
 pub(crate) const APP_COMMANDS: &[&str] = &[
     "load_config",
+    "take_config_recovery_notice",
     "get_config_file_path",
     "open_config_folder",
     "save_config",
@@ -14,6 +15,7 @@ pub(crate) const APP_COMMANDS: &[&str] = &[
     "validate_regex_patterns",
     "refresh_browsers",
     "list_running_browser_ids",
+    "list_missing_browser_ids",
     "preview_route_with_config",
     "route_and_open_with_config",
     "open_url",
