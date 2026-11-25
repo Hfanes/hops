@@ -69,6 +69,7 @@ the item's **Decisions** section.
 | 06 | [CI and release hardening](06-ci-release.md)                         | Implemented |
 | 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed    |
 | 08 | [Frontend refactor](08-frontend-refactor.md)                         | Proposed    |
+| 09 | [Release build on tauri-action v1](09-tauri-action-v1.md)            | Proposed    |
 
 ## Order
 
@@ -82,3 +83,6 @@ changes. A few items overlap and should respect that order:
 - 08 rewrites `useBrowserManager.ts`, which holds the TypeScript path
   normalization that 05 changes.
 - 01 removes unused commands; later items should not bring them back.
+- 09 was added after 06, which pinned `tauri-action` to `v0.6.2`. It changes
+  only `release.yml` and can be done at any point, ideally together with the
+  next version bump so the release it builds is the test.
