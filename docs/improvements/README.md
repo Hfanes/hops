@@ -28,6 +28,35 @@ explains what was chosen and why. Then implement it on its own branch,
 staying inside the item's scope, run the verification steps, and update the
 table below with the status and the PR.
 
+### Before discussing: re-verify the item
+
+Item files were written at a point in time and can be wrong or stale. Before
+presenting the open questions:
+
+- Re-read every file the item will touch, and every file that calls into or
+  could be affected by that code (callers, wrappers, capabilities, tests).
+- Check that each claim in the item is still true against the current code
+  (line references, "unused", "only called from X", default behavior).
+  For library or framework behavior, confirm it in the docs for the pinned
+  version or in the generated files (`src-tauri/gen/schemas`,
+  `node_modules`), not from memory.
+- Call out any claim that turned out wrong, and correct the item file.
+
+### How to present each open question
+
+Present each question on its own, in this structure:
+
+1. **Context**: what the code does today and why the question matters, with
+   file references.
+2. **Options**: for each option, what changes, then the pros and cons.
+3. **Consequences**: what can actually happen with each option, with a
+   concrete example (a scenario, an input, a sequence of events), including
+   what breaks or stays exposed if we do nothing.
+4. **Recommendation**: the option you suggest and how confident you are.
+
+Leave the decision to the user. Record the answer, and the reason for it, in
+the item's **Decisions** section.
+
 ## Items
 
 | #  | Item                                                                 | Status   | PR |
