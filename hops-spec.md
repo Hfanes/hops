@@ -243,7 +243,7 @@ After writing registry keys, Hops opens the Windows **Default Apps** settings pa
 
 The Settings UI shows a prominent **"Set as Default Browser"** button and a green confirmation badge once Hops is confirmed as default. After the user goes through the flow, check if the association was actually saved.
 
-Config is saved to: `%APPDATA%\Hops\config.json`
+Config is saved to: `%LOCALAPPDATA%\com.hfa.hops\config.json` (local, not roaming, because it holds machine-specific executable paths). A config left by 0.1.6 or earlier in `%APPDATA%\Hops\config.json` is copied there on first start, and the old file is renamed to `config.json.migrated`.
 
 ---
 

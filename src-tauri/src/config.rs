@@ -1,6 +1,7 @@
 use crate::browsers::{
     detect_browsers, hydrate_browser_icon_keys, hydrate_detected_browser_defaults,
-    merge_detected_browsers, normalize_manual_browser_entries, validate_browser_entry,
+    merge_detected_browsers, normalize_manual_browser_entries, normalize_path,
+    validate_browser_entry,
 };
 use crate::models::{AppConfig, BrowserConfig, RulePatternType, ThemePreference};
 use crate::routing::regex_pattern_error;
@@ -14,32 +15,128 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
+/// Suffix of a legacy `config.json` once it has been copied to the new location.
+const MIGRATED_SUFFIX: &str = "migrated";
+
+/// The `config.json` in use, resolved (and migrated) once per run.
 pub(crate) fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    lock_config_cache(app).path(app)
+}
+
+/// `config.json` in Tauri's local app data dir (`%LOCALAPPDATA%\com.hfa.hops`).
+///
+/// Local, not Roaming: the config holds absolute executable paths, which only
+/// make sense on the machine they were picked on. The same folder holds the
+/// WebView2 profile, and the uninstaller's "Delete app data" option removes it.
+///
+/// The folder is not created here: the migration and every config write
+/// create it, so a folder that cannot be created falls back to the legacy
+/// config instead of failing the whole load.
+fn local_config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|app_data| app_data.join(CONFIG_FILENAME))
+        .map_err(|error| format!("Could not resolve local app data directory: {error}"))
+}
+
+/// Where earlier versions kept `config.json`: `%APPDATA%\Hops`, or Tauri's
+/// roaming app data dir when `APPDATA` was not set.
+fn legacy_config_file_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
     #[cfg(target_os = "windows")]
     if let Ok(app_data_roaming) = std::env::var("APPDATA") {
-        let app_data = PathBuf::from(app_data_roaming).join("Hops");
-        fs::create_dir_all(&app_data).map_err(|error| {
-            format!(
-                "Could not create app data directory {:?}: {error}",
-                app_data
-            )
-        })?;
-        return Ok(app_data.join(CONFIG_FILENAME));
+        paths.push(
+            PathBuf::from(app_data_roaming)
+                .join("Hops")
+                .join(CONFIG_FILENAME),
+        );
     }
 
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not resolve app data directory: {error}"))?;
+    if let Ok(app_data) = app.path().app_data_dir() {
+        paths.push(app_data.join(CONFIG_FILENAME));
+    }
 
-    fs::create_dir_all(&app_data).map_err(|error| {
-        format!(
-            "Could not create app data directory {:?}: {error}",
-            app_data
-        )
+    paths
+}
+
+/// The config path to use for this run: `target`, after copying a legacy
+/// config into it when there is one. If the copy fails, the legacy file is
+/// used as before and the migration is tried again on the next run; the
+/// returned notice tells the user so.
+fn resolve_config_path(target: PathBuf, legacy_paths: &[PathBuf]) -> (PathBuf, Option<String>) {
+    match migrate_legacy_config(&target, legacy_paths) {
+        Ok(_) => (target, None),
+        Err((legacy_path, error)) => {
+            eprintln!("{error} Hops keeps using {:?} for now.", legacy_path);
+            let notice = format!(
+                "Hops could not move its settings to {}: {error} Your settings are unchanged \
+                 and still saved in {}. Hops will try again the next time it starts.",
+                target.parent().unwrap_or(&target).display(),
+                legacy_path.display()
+            );
+            (legacy_path, Some(notice))
+        }
+    }
+}
+
+/// Copies the first legacy config that exists to `target`, unless `target`
+/// already exists. Returns the legacy path that was migrated.
+///
+/// The legacy file is only renamed to `config.json.migrated` after the copy
+/// was written and read back byte for byte, so a failed migration never loses
+/// the user's settings. A legacy file that cannot be renamed is left in place:
+/// `target` now exists, so it is not migrated again.
+fn migrate_legacy_config(
+    target: &Path,
+    legacy_paths: &[PathBuf],
+) -> Result<Option<PathBuf>, (PathBuf, String)> {
+    if target.exists() {
+        return Ok(None);
+    }
+    let Some(legacy_path) = legacy_paths.iter().find(|path| path.is_file()) else {
+        return Ok(None);
+    };
+
+    let fail = |error: String| (legacy_path.clone(), error);
+    let data = fs::read(legacy_path).map_err(|error| {
+        fail(format!(
+            "Could not read the old config {:?} to move it: {error}.",
+            legacy_path
+        ))
     })?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            fail(format!(
+                "Could not create config directory {:?}: {error}.",
+                parent
+            ))
+        })?;
+    }
+    write_file_atomically(target, &data).map_err(|error| {
+        fail(format!(
+            "Could not copy the old config to {:?}: {error}.",
+            target
+        ))
+    })?;
+    if fs::read(target).ok().as_deref() != Some(data.as_slice()) {
+        let _ = fs::remove_file(target);
+        return Err(fail(format!(
+            "The config copied to {:?} did not read back the same.",
+            target
+        )));
+    }
 
-    Ok(app_data.join(CONFIG_FILENAME))
+    let migrated_path =
+        unused_sibling_path(&format!("{}.{MIGRATED_SUFFIX}", legacy_path.display()));
+    if let Err(error) = fs::rename(legacy_path, &migrated_path) {
+        eprintln!(
+            "Moved the config to {:?}, but could not rename the old one to {:?}: {error}",
+            target, migrated_path
+        );
+    }
+
+    Ok(Some(legacy_path.clone()))
 }
 
 /// In-memory copy of `config.json`, so handling a URL does not re-read,
@@ -58,8 +155,8 @@ pub(crate) struct ConfigCache {
 struct CachedConfigState {
     path: Option<PathBuf>,
     entry: Option<CachedConfig>,
-    /// Set when an invalid `config.json` was replaced, until the settings
-    /// window reads it once.
+    /// Set when an invalid `config.json` was replaced or the config could not
+    /// be moved to its new folder, until the settings window reads it once.
     recovery_notice: Option<String>,
 }
 
@@ -110,12 +207,24 @@ impl FileStamp {
 }
 
 impl CachedConfigState {
+    /// Adds to the one-time notice, keeping any earlier one.
+    fn add_notice(&mut self, notice: String) {
+        self.recovery_notice = Some(match self.recovery_notice.take() {
+            Some(earlier) => format!("{earlier} {notice}"),
+            None => notice,
+        });
+    }
+
     fn path(&mut self, app: &AppHandle) -> Result<PathBuf, String> {
         if let Some(path) = &self.path {
             return Ok(path.clone());
         }
 
-        let path = config_file_path(app)?;
+        let (path, migration_notice) =
+            resolve_config_path(local_config_file_path(app)?, &legacy_config_file_paths(app));
+        if let Some(notice) = migration_notice {
+            self.add_notice(notice);
+        }
         self.path = Some(path.clone());
         Ok(path)
     }
@@ -138,8 +247,22 @@ impl CachedConfigState {
         let (config, recovery) = load_or_init_config_from_path(path, auto_populate_browsers)?;
         self.remember(path, &config);
         if let Some(recovery) = &recovery {
-            self.recovery_notice = Some(recovery.notice());
+            self.add_notice(recovery.notice());
         }
+        Ok((config, recovery))
+    }
+
+    /// Loads the config, applies `change`, normalizes and saves it, all while
+    /// the caller holds the lock, so no other save can land in between.
+    fn update(
+        &mut self,
+        path: &Path,
+        change: impl FnOnce(&mut AppConfig),
+    ) -> Result<(AppConfig, Option<ConfigRecovery>), String> {
+        let (mut config, recovery) = self.load(path, false)?;
+        change(&mut config);
+        normalize_config(&mut config);
+        self.save(path, &config)?;
         Ok((config, recovery))
     }
 
@@ -177,6 +300,25 @@ pub(crate) fn load_or_init_config(
         let mut cache = lock_config_cache(app);
         let path = cache.path(app)?;
         cache.load(&path, auto_populate_browsers)?
+    };
+
+    if let Some(recovery) = recovery {
+        notify_config_recovery(app, &recovery);
+    }
+
+    Ok(config)
+}
+
+/// Read-modify-write of the config under one lock. Keep slow work such as
+/// browser detection out of `change`: URL handling waits for the same lock.
+pub(crate) fn update_config(
+    app: &AppHandle,
+    change: impl FnOnce(&mut AppConfig),
+) -> Result<AppConfig, String> {
+    let (config, recovery) = {
+        let mut cache = lock_config_cache(app);
+        let path = cache.path(app)?;
+        cache.update(&path, change)?
     };
 
     if let Some(recovery) = recovery {
@@ -271,15 +413,7 @@ fn back_up_invalid_config(path: &Path) -> Result<PathBuf, String> {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or_default();
-    let base = format!("{}.broken-{seconds}", path.display());
-
-    let backup_path = (0u32..)
-        .map(|attempt| match attempt {
-            0 => PathBuf::from(&base),
-            n => PathBuf::from(format!("{base}-{n}")),
-        })
-        .find(|candidate| !candidate.exists())
-        .expect("an unused backup name always exists");
+    let backup_path = unused_sibling_path(&format!("{}.broken-{seconds}", path.display()));
 
     fs::rename(path, &backup_path).map_err(|error| {
         format!(
@@ -288,6 +422,17 @@ fn back_up_invalid_config(path: &Path) -> Result<PathBuf, String> {
         )
     })?;
     Ok(backup_path)
+}
+
+/// `base`, or `base-1`, `base-2`... when that name is taken.
+fn unused_sibling_path(base: &str) -> PathBuf {
+    (0u32..)
+        .map(|attempt| match attempt {
+            0 => PathBuf::from(base),
+            n => PathBuf::from(format!("{base}-{n}")),
+        })
+        .find(|candidate| !candidate.exists())
+        .expect("an unused file name always exists")
 }
 
 fn default_config() -> AppConfig {
@@ -304,10 +449,6 @@ fn default_config() -> AppConfig {
     }
 }
 
-fn normalize_browser_path(path: &str) -> String {
-    path.trim().replace('/', "\\").to_lowercase()
-}
-
 pub(crate) fn reset_config_with_detected_browsers(
     detected_browsers: Vec<BrowserConfig>,
     onboarding_completed: bool,
@@ -321,6 +462,15 @@ pub(crate) fn reset_config_with_detected_browsers(
 pub(crate) fn normalize_config(config: &mut AppConfig) {
     if config.version == 0 {
         config.version = 1;
+    }
+
+    // Stored trimmed, so launching, the running check and duplicate detection
+    // all see the same path.
+    for browser in &mut config.browsers {
+        let trimmed = browser.path.trim();
+        if trimmed.len() != browser.path.len() {
+            browser.path = trimmed.to_string();
+        }
     }
 
     hydrate_detected_browser_defaults(config);
@@ -355,7 +505,7 @@ pub(crate) fn validate_config(config: &AppConfig) -> Result<(), String> {
     for browser in &config.browsers {
         validate_browser_entry(browser)?;
 
-        let normalized_path = normalize_browser_path(&browser.path);
+        let normalized_path = normalize_path(&browser.path);
         if !browser_paths.insert(normalized_path) {
             return Err(format!(
                 "Browser path '{}' is duplicated. Each browser entry must use a unique executable path.",
@@ -850,5 +1000,220 @@ mod tests {
         );
 
         cleanup(&path);
+    }
+
+    #[test]
+    fn config_cache_update_builds_on_a_save_made_after_the_last_load() {
+        let path = temp_config_path("update");
+        let config = reset_config_with_detected_browsers(Vec::new(), false);
+        write_config_file(&path, &config).expect("config should write");
+
+        let mut cache = CachedConfigState::default();
+        cache.load(&path, false).expect("first load reads the file");
+
+        // A settings save lands between the refresh's start and its write.
+        let mut saved = config.clone();
+        saved.always_show_picker = true;
+        cache
+            .save(&path, &saved)
+            .expect("settings save should succeed");
+
+        let (updated, _) = cache
+            .update(&path, |config| config.disable_transparency = true)
+            .expect("update should succeed");
+        assert!(updated.always_show_picker);
+        assert!(updated.disable_transparency);
+
+        let on_disk: AppConfig =
+            serde_json::from_str(&fs::read_to_string(&path).expect("config should read"))
+                .expect("config should parse");
+        assert!(on_disk.always_show_picker);
+        assert!(on_disk.disable_transparency);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn config_cache_update_normalizes_the_changed_config() {
+        let path = temp_config_path("update-normalize");
+        let config = reset_config_with_detected_browsers(Vec::new(), false);
+        write_config_file(&path, &config).expect("config should write");
+
+        let mut cache = CachedConfigState::default();
+        let (updated, _) = cache
+            .update(&path, |config| {
+                config.default_browser_id = Some("missing-browser".to_string())
+            })
+            .expect("update should succeed");
+        assert_eq!(updated.default_browser_id, None);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn normalize_config_stores_browser_paths_trimmed() {
+        let mut config = reset_config_with_detected_browsers(
+            vec![build_detected_browser(
+                "  C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\t",
+                Some("Google Chrome"),
+                None,
+            )],
+            true,
+        );
+
+        normalize_config(&mut config);
+
+        assert_eq!(
+            config.browsers[0].path,
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        );
+    }
+
+    /// A target `config.json` path and a legacy one in separate temp folders.
+    fn migration_paths(label: &str) -> (PathBuf, PathBuf) {
+        let target = temp_config_path(&format!("{label}-local"));
+        let legacy = temp_config_path(&format!("{label}-roaming"));
+        (target, legacy)
+    }
+
+    #[test]
+    fn migration_copies_the_legacy_config_and_renames_the_old_file() {
+        let (target, legacy) = migration_paths("migrate");
+        fs::write(&legacy, "{\"legacy\": true}").expect("legacy config should write");
+
+        let migrated = migrate_legacy_config(&target, std::slice::from_ref(&legacy))
+            .expect("migration should succeed");
+
+        assert_eq!(migrated, Some(legacy.clone()));
+        assert_eq!(
+            fs::read_to_string(&target).expect("new config should read"),
+            "{\"legacy\": true}"
+        );
+        assert!(!legacy.exists());
+        let renamed = legacy.with_file_name("config.json.migrated");
+        assert_eq!(
+            fs::read_to_string(&renamed).expect("old config is kept as .migrated"),
+            "{\"legacy\": true}"
+        );
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn migration_does_nothing_when_the_new_config_exists() {
+        let (target, legacy) = migration_paths("existing");
+        fs::write(&target, "new").expect("new config should write");
+        fs::write(&legacy, "old").expect("legacy config should write");
+
+        let migrated = migrate_legacy_config(&target, std::slice::from_ref(&legacy))
+            .expect("nothing to migrate");
+
+        assert_eq!(migrated, None);
+        assert_eq!(fs::read_to_string(&target).expect("new config"), "new");
+        assert_eq!(fs::read_to_string(&legacy).expect("legacy config"), "old");
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn migration_does_nothing_without_a_legacy_config() {
+        let (target, legacy) = migration_paths("fresh");
+
+        let migrated = migrate_legacy_config(&target, std::slice::from_ref(&legacy))
+            .expect("nothing to migrate");
+
+        assert_eq!(migrated, None);
+        assert!(!target.exists());
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn migration_uses_the_first_legacy_config_that_exists() {
+        let (target, legacy) = migration_paths("first");
+        let missing = legacy.with_file_name("missing.json");
+        fs::write(&legacy, "second").expect("legacy config should write");
+
+        let migrated = migrate_legacy_config(&target, &[missing, legacy.clone()])
+            .expect("migration should succeed");
+
+        assert_eq!(migrated, Some(legacy.clone()));
+        assert_eq!(fs::read_to_string(&target).expect("new config"), "second");
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn migration_never_overwrites_an_earlier_migrated_file() {
+        let (target, legacy) = migration_paths("again");
+        let earlier = legacy.with_file_name("config.json.migrated");
+        fs::write(&earlier, "earlier").expect("earlier migrated file should write");
+        fs::write(&legacy, "current").expect("legacy config should write");
+
+        migrate_legacy_config(&target, std::slice::from_ref(&legacy))
+            .expect("migration should succeed");
+
+        assert_eq!(fs::read_to_string(&earlier).expect("earlier"), "earlier");
+        assert_eq!(
+            fs::read_to_string(legacy.with_file_name("config.json.migrated-1"))
+                .expect("second migrated file"),
+            "current"
+        );
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn a_failed_migration_keeps_using_the_legacy_config() {
+        let (target, legacy) = migration_paths("blocked");
+        fs::write(&legacy, "old").expect("legacy config should write");
+        // A file where the new config folder should be makes the copy fail.
+        let blocker = target.with_file_name("blocker");
+        fs::write(&blocker, "").expect("blocking file should write");
+        let blocked_target = blocker.join("config.json");
+
+        let (resolved, notice) =
+            resolve_config_path(blocked_target.clone(), std::slice::from_ref(&legacy));
+
+        assert_eq!(resolved, legacy);
+        assert!(!blocked_target.exists());
+        assert_eq!(fs::read_to_string(&legacy).expect("legacy config"), "old");
+        let notice = notice.expect("the user is told the move failed");
+        assert!(notice.contains("Your settings are unchanged"), "{notice}");
+        assert!(notice.contains(&legacy.display().to_string()), "{notice}");
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn a_successful_migration_has_no_notice() {
+        let (target, legacy) = migration_paths("quiet");
+        fs::write(&legacy, "old").expect("legacy config should write");
+
+        let (resolved, notice) = resolve_config_path(target.clone(), std::slice::from_ref(&legacy));
+
+        assert_eq!(resolved, target);
+        assert_eq!(notice, None);
+
+        cleanup(&target);
+        cleanup(&legacy);
+    }
+
+    #[test]
+    fn notices_are_combined_until_read() {
+        let mut cache = CachedConfigState::default();
+        cache.add_notice("First.".to_string());
+        cache.add_notice("Second.".to_string());
+
+        assert_eq!(
+            cache.recovery_notice.take().as_deref(),
+            Some("First. Second.")
+        );
     }
 }

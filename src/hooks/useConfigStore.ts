@@ -27,8 +27,9 @@ export interface PersistConfigOptions {
  * The settings window's copy of the config and everything that saves it.
  *
  * `configRef` always holds the latest config, including changes made earlier
- * in the same event, while `config` drives rendering. Saves run one at a time
- * through a queue so they reach the backend in order. Settings-panel edits are
+ * in the same event, while `config` drives rendering. Saves, and backend calls
+ * that write the config, run one at a time through a queue so they reach the
+ * backend in order. Settings-panel edits are
  * debounced; `cancelScheduledSettingsSave` and `waitForQueuedSaves` let the
  * window flush everything before it closes.
  */
@@ -123,8 +124,20 @@ export function useConfigStore({
       }
     };
 
-    const queued = saveQueueRef.current.then(runSave, runSave);
-    saveQueueRef.current = queued.catch(() => undefined);
+    return enqueueConfigTask(runSave);
+  }
+
+  /**
+   * Runs `task` after every save queued so far, and holds back saves queued
+   * after it until it finishes. Use it for any backend call that writes the
+   * config (refresh, reset), so it never interleaves with a save.
+   */
+  function enqueueConfigTask<T>(task: () => Promise<T>): Promise<T> {
+    const queued = saveQueueRef.current.then(task, task);
+    saveQueueRef.current = queued.then(
+      () => undefined,
+      () => undefined,
+    );
     return queued;
   }
 
@@ -151,6 +164,22 @@ export function useConfigStore({
     window.clearTimeout(settingsSaveTimerRef.current);
     settingsSaveTimerRef.current = null;
     return true;
+  }
+
+  /**
+   * Queues a debounced settings save now instead of when its timer fires, so
+   * a task queued next sees it. The save carries the latest config.
+   */
+  function flushScheduledSettingsSave() {
+    const latestConfig = configRef.current;
+    if (!cancelScheduledSettingsSave() || !latestConfig) {
+      return;
+    }
+
+    persistConfig(latestConfig, {
+      errorPrefix: "Could not save settings",
+      applySavedConfig: false,
+    }).catch(() => undefined);
   }
 
   /** Resolves once every save queued so far has finished. */
@@ -219,8 +248,10 @@ export function useConfigStore({
     applyConfigChange,
     applyLoadedConfig,
     persistConfig,
+    enqueueConfigTask,
     scheduleSettingsSave,
     cancelScheduledSettingsSave,
+    flushScheduledSettingsSave,
     waitForQueuedSaves,
     updateSettingsDraft,
     updateThemePreference,

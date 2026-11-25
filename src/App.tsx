@@ -105,6 +105,7 @@ function App() {
     isSaving,
     applyLoadedConfig,
     persistConfig,
+    enqueueConfigTask,
     scheduleSettingsSave,
     cancelScheduledSettingsSave,
     waitForQueuedSaves,
@@ -395,7 +396,11 @@ function App() {
   async function handleResetConfig() {
     setIsResettingConfig(true);
     try {
-      const reset = await resetConfig();
+      // Pending edits are discarded by the reset, so drop them instead of
+      // saving them, and queue the reset after saves already in flight.
+      cancelScheduledSettingsSave();
+      cancelPendingBrowserSaves();
+      const reset = await enqueueConfigTask(() => resetConfig());
       setSettingsActionPanel("none");
       applyLoadedConfig(reset);
       resetRuleEditState();
