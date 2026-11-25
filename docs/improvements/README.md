@@ -61,7 +61,7 @@ the item's **Decisions** section.
 
 | #  | Item                                                                 | Status   | PR |
 | -- | -------------------------------------------------------------------- | -------- | -- |
-| 01 | [Command access per window](01-command-acl.md)                       | Proposed |    |
+| 01 | [Command access per window](01-command-acl.md)                       | Implemented |    |
 | 02 | [Manual browser trust model](02-manual-browser-trust.md)             | Proposed |    |
 | 03 | [Config robustness](03-config-robustness.md)                         | Proposed |    |
 | 04 | [Windows registration](04-windows-registration.md)                   | Proposed |    |

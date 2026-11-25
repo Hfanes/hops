@@ -114,12 +114,6 @@ pub(crate) fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, St
 }
 
 #[tauri::command(async)]
-pub(crate) fn preview_route(app: AppHandle, url: String) -> Result<RouteDecision, String> {
-    let config = load_or_init_config(&app, false)?;
-    resolve_route(&config, &url)
-}
-
-#[tauri::command(async)]
 pub(crate) fn preview_route_with_config(
     config: AppConfig,
     url: String,
@@ -128,20 +122,6 @@ pub(crate) fn preview_route_with_config(
     normalize_config(&mut normalized);
     validate_config(&normalized)?;
     resolve_route(&normalized, &url)
-}
-
-#[tauri::command(async)]
-pub(crate) fn route_and_open(app: AppHandle, url: String) -> Result<RouteDecision, String> {
-    let config = load_or_init_config(&app, false)?;
-    let decision = resolve_route(&config, &url)?;
-
-    if decision.action == RouteAction::OpenBrowser {
-        if let Some(browser_id) = decision.browser_id.as_deref() {
-            open_url_with_browser(&config, browser_id, &url, decision.private_mode)?;
-        }
-    }
-
-    Ok(decision)
 }
 
 #[tauri::command(async)]
@@ -166,7 +146,22 @@ pub(crate) fn route_and_open_with_config(
 }
 
 #[tauri::command(async)]
-pub(crate) fn open_url(app: AppHandle, request: OpenUrlRequest) -> Result<(), String> {
+pub(crate) fn open_url(
+    app: AppHandle,
+    state: State<'_, PickerState>,
+    request: OpenUrlRequest,
+) -> Result<(), String> {
+    {
+        let session = state
+            .session
+            .lock()
+            .map_err(|_| "Picker state lock was poisoned.".to_string())?;
+        ensure_url_matches_picker_session(
+            session.as_ref().map(|session| session.url.as_str()),
+            &request.url,
+        )?;
+    }
+
     let config = load_or_init_config(&app, false)?;
     open_url_with_browser(
         &config,
@@ -244,4 +239,46 @@ pub(crate) fn register_hops_as_browser() -> Result<BrowserRegistrationStatus, St
 #[tauri::command(async)]
 pub(crate) fn unregister_hops_as_browser() -> Result<BrowserRegistrationStatus, String> {
     unregister_hops_as_browser_internal()
+}
+
+/// The picker may only open the URL it was shown for. If a new link replaced
+/// the session after the picker rendered, the request fails instead of opening
+/// the new URL in the browser picked for the old one.
+fn ensure_url_matches_picker_session(
+    session_url: Option<&str>,
+    requested_url: &str,
+) -> Result<(), String> {
+    match session_url {
+        Some(session_url) if session_url == requested_url => Ok(()),
+        Some(_) => Err("This link is no longer the one in the picker.".to_string()),
+        None => Err("There is no link to open in the picker.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_url_matches_picker_session;
+
+    #[test]
+    fn allows_the_url_of_the_current_picker_session() {
+        assert!(ensure_url_matches_picker_session(
+            Some("https://example.com/a"),
+            "https://example.com/a",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_a_url_that_differs_from_the_picker_session() {
+        assert!(ensure_url_matches_picker_session(
+            Some("https://example.com/a"),
+            "https://example.com/b",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_any_url_when_there_is_no_picker_session() {
+        assert!(ensure_url_matches_picker_session(None, "https://example.com/a").is_err());
+    }
 }

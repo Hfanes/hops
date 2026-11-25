@@ -82,19 +82,11 @@ export function listRunningBrowserIds(): Promise<string[]> {
   return invoke<string[]>("list_running_browser_ids");
 }
 
-export function previewRoute(url: string): Promise<RouteDecision> {
-  return invoke<RouteDecision>("preview_route", { url });
-}
-
 export function previewRouteWithConfig(
   config: AppConfig,
   url: string,
 ): Promise<RouteDecision> {
   return invoke<RouteDecision>("preview_route_with_config", { config, url });
-}
-
-export function routeAndOpen(url: string): Promise<RouteDecision> {
-  return invoke<RouteDecision>("route_and_open", { url });
 }
 
 export function routeAndOpenWithConfig(
