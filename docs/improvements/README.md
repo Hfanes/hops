@@ -26,7 +26,7 @@ Pick the next item and start by discussing its open questions. Once we agree,
 the answers go into the item's **Decisions** section, so the file alone
 explains what was chosen and why. Then implement it on its own branch,
 staying inside the item's scope, run the verification steps, and update the
-table below with the status and the PR.
+table below with the status.
 
 ### Before discussing: re-verify the item
 
@@ -59,16 +59,16 @@ the item's **Decisions** section.
 
 ## Items
 
-| #  | Item                                                                 | Status   | PR |
-| -- | -------------------------------------------------------------------- | -------- | -- |
-| 01 | [Command access per window](01-command-acl.md)                       | Implemented |    |
-| 02 | [Manual browser trust model](02-manual-browser-trust.md)             | Proposed |    |
-| 03 | [Config robustness](03-config-robustness.md)                         | Proposed |    |
-| 04 | [Windows registration](04-windows-registration.md)                   | Proposed |    |
-| 05 | [Config location and concurrency](05-config-location-concurrency.md) | Proposed |    |
-| 06 | [CI and release hardening](06-ci-release.md)                         | Proposed |    |
-| 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed |    |
-| 08 | [Frontend refactor](08-frontend-refactor.md)                         | Proposed |    |
+| #  | Item                                                                 | Status      |
+| -- | -------------------------------------------------------------------- | ----------- |
+| 01 | [Command access per window](01-command-acl.md)                       | Implemented |
+| 02 | [Manual browser trust model](02-manual-browser-trust.md)             | Proposed    |
+| 03 | [Config robustness](03-config-robustness.md)                         | Proposed    |
+| 04 | [Windows registration](04-windows-registration.md)                   | Proposed    |
+| 05 | [Config location and concurrency](05-config-location-concurrency.md) | Proposed    |
+| 06 | [CI and release hardening](06-ci-release.md)                         | Proposed    |
+| 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed    |
+| 08 | [Frontend refactor](08-frontend-refactor.md)                         | Proposed    |
 
 ## Order
 
