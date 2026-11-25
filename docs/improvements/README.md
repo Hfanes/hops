@@ -66,7 +66,7 @@ the item's **Decisions** section.
 | 03 | [Config robustness](03-config-robustness.md)                         | Implemented |
 | 04 | [Windows registration](04-windows-registration.md)                   | Implemented |
 | 05 | [Config location and concurrency](05-config-location-concurrency.md) | Proposed    |
-| 06 | [CI and release hardening](06-ci-release.md)                         | Proposed    |
+| 06 | [CI and release hardening](06-ci-release.md)                         | Implemented |
 | 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed    |
 | 08 | [Frontend refactor](08-frontend-refactor.md)                         | Proposed    |
 
