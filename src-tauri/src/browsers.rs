@@ -352,7 +352,7 @@ const HOPS_SELF_LAUNCH_ERROR: &str =
 /// copy of Hops (e.g. the installed app while a dev build runs) is caught too,
 /// since the two would just pass links back and forth.
 fn is_hops_executable(path: &str) -> bool {
-    let normalized = normalize_path(path.trim());
+    let normalized = normalize_path(path);
     if normalized.rsplit('\\').next() == Some("hops.exe") {
         return true;
     }
@@ -817,8 +817,9 @@ fn stable_id(prefix: &str, key: &str) -> String {
     format!("{prefix}-{hash:016x}")
 }
 
-fn normalize_path(path: &str) -> String {
-    path.replace('/', "\\").to_lowercase()
+/// The one way Hops compares executable paths: trimmed, `/` as `\`, lowercase.
+pub(crate) fn normalize_path(path: &str) -> String {
+    path.trim().replace('/', "\\").to_lowercase()
 }
 
 fn executable_name_from_path(path: &str) -> Option<String> {
@@ -834,7 +835,7 @@ fn browser_executable_names(browsers: &[BrowserConfig]) -> HashSet<String> {
     browsers
         .iter()
         .filter_map(|browser| {
-            normalize_path(browser.path.trim())
+            normalize_path(&browser.path)
                 .rsplit('\\')
                 .next()
                 .filter(|name| !name.is_empty())
@@ -1693,6 +1694,26 @@ mod tests {
         assert!(running.iter().all(|path| wanted
             .iter()
             .any(|name| path.ends_with(&format!("\\{name}")))));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_path_with_surrounding_whitespace_is_still_reported_as_running() {
+        let current_exe = std::env::current_exe().expect("current exe should resolve");
+        let padded_path = format!("  {}\t", current_exe.to_string_lossy());
+
+        let running = running_processes(&[browser_at(&padded_path)])
+            .expect("process snapshot should succeed");
+
+        assert!(is_browser_running(&browser_at(&padded_path), &running));
+    }
+
+    #[test]
+    fn normalize_path_trims_unifies_separators_and_lowercases() {
+        assert_eq!(
+            normalize_path("  C:/Program Files/Browser/Browser.EXE \n"),
+            "c:\\program files\\browser\\browser.exe"
+        );
     }
 
     #[cfg(target_os = "windows")]

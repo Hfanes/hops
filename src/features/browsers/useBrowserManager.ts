@@ -46,6 +46,8 @@ export function useBrowserManager({
     applyConfigChange,
     applyLoadedConfig,
     persistConfig,
+    enqueueConfigTask,
+    flushScheduledSettingsSave,
   } = store;
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -65,6 +67,9 @@ export function useBrowserManager({
   const [isConfirmingManualBrowser, setIsConfirmingManualBrowser] =
     useState(false);
   const browserSaveTimersRef = useRef<Record<string, number>>({});
+  // Browser saves validate before they queue, so they are tracked from the
+  // start: a refresh must wait for them, not only for the save queue.
+  const inFlightBrowserSavesRef = useRef<Set<Promise<void>>>(new Set());
 
   useEffect(() => {
     return () => {
@@ -74,6 +79,8 @@ export function useBrowserManager({
     };
   }, []);
 
+  // Mirrors `normalize_path` in browsers.rs, which `validate_config` uses to
+  // reject duplicate paths. This copy only gives an early error in the UI.
   function normalizeBrowserPath(path: string) {
     return path.trim().replace(/\//g, "\\").toLowerCase();
   }
@@ -334,8 +341,31 @@ export function useBrowserManager({
         return next;
       });
 
-      void saveBrowserChanges(browserId, nextConfig);
+      startBrowserSave(browserId, nextConfig);
     }, 500);
+  }
+
+  function startBrowserSave(browserId: string, baseConfig: AppConfig) {
+    const save = saveBrowserChanges(browserId, baseConfig).catch(
+      () => undefined,
+    );
+    inFlightBrowserSavesRef.current.add(save);
+    void save.finally(() => inFlightBrowserSavesRef.current.delete(save));
+  }
+
+  /**
+   * Runs `task` once every pending edit has been saved: debounced browser
+   * edits are flushed and awaited, then the debounced settings save is queued
+   * ahead of `task`. Otherwise a save that lands afterwards would write back
+   * the config from before `task` ran.
+   */
+  async function runAfterPendingSaves<T>(task: () => Promise<T>) {
+    for (const browserId of Object.keys(browserSaveTimersRef.current)) {
+      flushBrowserSave(browserId);
+    }
+    await Promise.all([...inFlightBrowserSavesRef.current]);
+    flushScheduledSettingsSave();
+    return enqueueConfigTask(task);
   }
 
   function flushBrowserSave(browserId: string) {
@@ -358,14 +388,17 @@ export function useBrowserManager({
       return next;
     });
 
-    void saveBrowserChanges(browserId, latestConfig);
+    startBrowserSave(browserId, latestConfig);
   }
 
   async function handleRefreshBrowsers() {
     setIsRefreshing(true);
     try {
-      const previousRules = configRef.current?.rules ?? [];
-      const refreshed = await refreshBrowsers();
+      let previousRules = configRef.current?.rules ?? [];
+      const refreshed = await runAfterPendingSaves(() => {
+        previousRules = configRef.current?.rules ?? [];
+        return refreshBrowsers();
+      });
       applyLoadedConfig(refreshed);
       // Rules for a browser that is no longer installed are removed with it.
       const keptRuleIds = new Set(refreshed.rules.map((rule) => rule.id));
