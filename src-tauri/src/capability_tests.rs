@@ -56,12 +56,13 @@ fn every_app_command_is_granted_to_some_window() {
 fn picker_is_granted_only_its_own_commands() {
     let granted = granted_commands();
     let expected: BTreeSet<&str> = PICKER_COMMANDS.iter().copied().collect();
-    for command in granted["picker"].difference(&expected) {
-        panic!("picker grants unexpected command {command}");
-    }
-    for command in expected.difference(&granted["picker"]) {
-        panic!("picker is missing command {command}");
-    }
+    let unexpected: Vec<_> = granted["picker"].difference(&expected).collect();
+    assert!(
+        unexpected.is_empty(),
+        "picker grants unexpected commands {unexpected:?}"
+    );
+    let missing: Vec<_> = expected.difference(&granted["picker"]).collect();
+    assert!(missing.is_empty(), "picker is missing commands {missing:?}");
 }
 
 #[test]

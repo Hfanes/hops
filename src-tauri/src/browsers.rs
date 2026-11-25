@@ -101,7 +101,7 @@ pub(crate) fn normalize_manual_browser_entries(config: &mut AppConfig) {
         };
 
         match recognition.recognition {
-            BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => {
+            BrowserRecognition::Known => {
                 browser.manual_trust = Some(ManualBrowserTrust::Verified);
                 browser.private_flag = recognition.private_flag.clone();
                 if browser.name.trim().is_empty() {
@@ -109,9 +109,17 @@ pub(crate) fn normalize_manual_browser_entries(config: &mut AppConfig) {
                 }
             }
             BrowserRecognition::UnverifiedManual => {
-                if browser.manual_trust != Some(ManualBrowserTrust::UserConfirmed) {
-                    browser.manual_trust = None;
-                }
+                // Older versions also recognized browsers by display name and
+                // by substrings of the path, so a browser saved as `Verified`
+                // may no longer be recognized. The user chose that executable,
+                // so keep it as confirmed, but without a private flag, since
+                // its family is no longer known.
+                browser.manual_trust = match browser.manual_trust {
+                    Some(ManualBrowserTrust::Verified | ManualBrowserTrust::UserConfirmed) => {
+                        Some(ManualBrowserTrust::UserConfirmed)
+                    }
+                    None => None,
+                };
                 browser.private_flag = None;
             }
         }
@@ -381,20 +389,17 @@ pub(crate) fn validate_browser_for_launch(
     }
 
     let recognition = classify_browser_path(path, Some(browser.name.as_str()))?;
-    let private_flag = validate_private_flag(browser, &recognition)?;
+    let private_flag =
+        validate_private_flag(browser.private_flag.as_deref(), &recognition, &browser.name)?;
 
-    if browser.source == BrowserSource::Manual {
-        match recognition.recognition {
-            BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => {}
-            BrowserRecognition::UnverifiedManual => {
-                if browser.manual_trust != Some(ManualBrowserTrust::UserConfirmed) {
-                    return Err(format!(
-                        "Manual browser '{}' needs explicit confirmation before Hops can launch it.",
-                        browser.name
-                    ));
-                }
-            }
-        }
+    if browser.source == BrowserSource::Manual
+        && recognition.recognition == BrowserRecognition::UnverifiedManual
+        && browser.manual_trust != Some(ManualBrowserTrust::UserConfirmed)
+    {
+        return Err(format!(
+            "Manual browser '{}' needs explicit confirmation before Hops can launch it.",
+            browser.name
+        ));
     }
 
     Ok(ValidatedBrowserLaunch {
@@ -425,21 +430,17 @@ pub(crate) fn validate_manual_browser_request(
     }
 
     let recognition = classify_browser_path(path, Some(request.name.as_str()))?;
-    let private_flag = validate_private_flag_for_request(request, &recognition)?;
+    let private_flag = validate_private_flag(
+        request.private_flag.as_deref(),
+        &recognition,
+        request.name.as_str(),
+    )?;
 
     let (manual_trust, requires_confirmation, message) = match recognition.recognition {
         BrowserRecognition::Known => (
             Some(ManualBrowserTrust::Verified),
             false,
             format!("Recognized as {}.", recognition.name),
-        ),
-        BrowserRecognition::RecognizedFamily => (
-            Some(ManualBrowserTrust::Verified),
-            false,
-            format!(
-                "Recognized as a {}-family browser.",
-                browser_family_label(recognition.family)
-            ),
         ),
         BrowserRecognition::UnverifiedManual if request.allow_user_confirmed => (
             Some(ManualBrowserTrust::UserConfirmed),
@@ -460,9 +461,7 @@ pub(crate) fn validate_manual_browser_request(
         recognition: recognition.recognition,
         manual_trust,
         browser_name: match recognition.recognition {
-            BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => {
-                recognition.name.clone()
-            }
+            BrowserRecognition::Known => recognition.name.clone(),
             BrowserRecognition::UnverifiedManual => {
                 preferred_browser_name(request.name.as_str(), path)
             }
@@ -477,6 +476,10 @@ pub(crate) fn validate_manual_browser_request(
     })
 }
 
+/// Identifies a browser from its executable alone: a known install path
+/// suffix, then an exact executable name. The display name is only used as
+/// the fallback name, never for recognition, so an arbitrary `.exe` named
+/// "Google Chrome" stays unrecognized.
 pub(crate) fn resolve_browser_metadata(
     path: &str,
     display_name_hint: Option<&str>,
@@ -485,17 +488,6 @@ pub(crate) fn resolve_browser_metadata(
     let exe_name = executable_name_from_path(path).unwrap_or_else(|| "browser".to_string());
     let exe_name = exe_name.to_lowercase();
     let normalized_path = normalize_path(path);
-
-    if let Some(definition) =
-        display_name_hint.and_then(find_known_browser_definition_by_display_name)
-    {
-        return ResolvedBrowserMetadata {
-            name: definition.display_name.to_string(),
-            family: definition.family,
-            private_flag: resolved_private_flag_for_definition(definition),
-            icon_key: Some(definition.icon_key.to_string()),
-        };
-    }
 
     if let Some(definition) = known_browser_definitions().iter().find(|definition| {
         definition
@@ -547,86 +539,12 @@ pub(crate) fn classify_browser_path(
 
     let metadata = resolve_browser_metadata(path, display_name_hint, None);
     if metadata.family != BrowserFamily::Unknown {
-        let known = is_known_browser_match(path, display_name_hint);
         return Ok(BrowserRecognitionResult {
-            recognition: if known {
-                BrowserRecognition::Known
-            } else {
-                BrowserRecognition::RecognizedFamily
-            },
+            recognition: BrowserRecognition::Known,
             name: metadata.name,
             family: Some(metadata.family),
             private_flag: metadata.private_flag,
             icon_key: metadata.icon_key,
-        });
-    }
-
-    let normalized_path = normalize_path(path);
-    let hint = display_name_hint.unwrap_or_default().to_lowercase();
-    let stem = executable_name_from_path(path)
-        .unwrap_or_else(|| "browser".to_string())
-        .to_lowercase();
-    let haystack = format!("{normalized_path} {hint} {stem}");
-
-    if haystack.contains("tor browser") || haystack.contains("\\tor\\browser\\firefox.exe") {
-        return Ok(BrowserRecognitionResult {
-            recognition: BrowserRecognition::RecognizedFamily,
-            name: "Tor Browser".to_string(),
-            family: Some(BrowserFamily::Firefox),
-            private_flag: None,
-            icon_key: Some("tor".to_string()),
-        });
-    }
-
-    if firefox_family_tokens()
-        .iter()
-        .any(|token| haystack.contains(token))
-    {
-        return Ok(BrowserRecognitionResult {
-            recognition: BrowserRecognition::RecognizedFamily,
-            name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
-            family: Some(BrowserFamily::Firefox),
-            private_flag: default_private_flag_for_family(BrowserFamily::Firefox),
-            icon_key: browser_family_key(BrowserFamily::Firefox).map(str::to_string),
-        });
-    }
-
-    if edge_family_tokens()
-        .iter()
-        .any(|token| haystack.contains(token))
-    {
-        return Ok(BrowserRecognitionResult {
-            recognition: BrowserRecognition::RecognizedFamily,
-            name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
-            family: Some(BrowserFamily::Edge),
-            private_flag: default_private_flag_for_family(BrowserFamily::Edge),
-            icon_key: browser_family_key(BrowserFamily::Edge).map(str::to_string),
-        });
-    }
-
-    if opera_family_tokens()
-        .iter()
-        .any(|token| haystack.contains(token))
-    {
-        return Ok(BrowserRecognitionResult {
-            recognition: BrowserRecognition::RecognizedFamily,
-            name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
-            family: Some(BrowserFamily::Opera),
-            private_flag: default_private_flag_for_family(BrowserFamily::Opera),
-            icon_key: browser_family_key(BrowserFamily::Opera).map(str::to_string),
-        });
-    }
-
-    if chromium_family_tokens()
-        .iter()
-        .any(|token| haystack.contains(token))
-    {
-        return Ok(BrowserRecognitionResult {
-            recognition: BrowserRecognition::RecognizedFamily,
-            name: preferred_browser_name(display_name_hint.unwrap_or_default(), path),
-            family: Some(BrowserFamily::Chromium),
-            private_flag: default_private_flag_for_family(BrowserFamily::Chromium),
-            icon_key: browser_family_key(BrowserFamily::Chromium).map(str::to_string),
         });
     }
 
@@ -639,91 +557,25 @@ pub(crate) fn classify_browser_path(
     })
 }
 
-fn find_known_browser_definition_by_display_name(
-    name: &str,
-) -> Option<&'static KnownBrowserDefinition> {
-    known_browser_definitions()
-        .iter()
-        .find(|definition| definition.display_name.eq_ignore_ascii_case(name))
-}
-
-fn is_known_browser_match(path: &str, display_name_hint: Option<&str>) -> bool {
-    let normalized_path = normalize_path(path);
-    let exe_name = executable_name_from_path(path)
-        .unwrap_or_else(|| "browser".to_string())
-        .to_lowercase();
-
-    if known_browser_definitions().iter().any(|definition| {
-        definition
-            .known_install_path_suffixes
-            .iter()
-            .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
-    }) {
-        return true;
-    }
-
-    if display_name_hint
-        .and_then(find_known_browser_definition_by_display_name)
-        .is_some()
-    {
-        return true;
-    }
-
-    known_browser_definitions()
-        .iter()
-        .any(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
-}
-
 fn validate_private_flag(
-    browser: &BrowserConfig,
-    recognition: &BrowserRecognitionResult,
-) -> Result<Option<String>, String> {
-    validate_private_flag_value(
-        browser.private_flag.as_deref(),
-        recognition,
-        &browser.name,
-        browser.manual_trust,
-    )
-}
-
-fn validate_private_flag_for_request(
-    request: &ManualBrowserValidationRequest,
-    recognition: &BrowserRecognitionResult,
-) -> Result<Option<String>, String> {
-    validate_private_flag_value(
-        request.private_flag.as_deref(),
-        recognition,
-        request.name.as_str(),
-        if request.allow_user_confirmed {
-            Some(ManualBrowserTrust::UserConfirmed)
-        } else {
-            None
-        },
-    )
-}
-
-fn validate_private_flag_value(
     private_flag: Option<&str>,
     recognition: &BrowserRecognitionResult,
     browser_name: &str,
-    manual_trust: Option<ManualBrowserTrust>,
 ) -> Result<Option<String>, String> {
     let trimmed = private_flag.map(str::trim).filter(|flag| !flag.is_empty());
     match recognition.recognition {
-        BrowserRecognition::Known | BrowserRecognition::RecognizedFamily => {
-            match (trimmed, recognition.private_flag.as_deref()) {
-                (Some(flag), Some(expected)) if flag != expected => Err(format!(
-                    "Browser '{}' only allows the private flag '{}'.",
-                    browser_name, expected
-                )),
-                (_, Some(expected)) => Ok(Some(expected.to_string())),
-                (Some(_), None) => Err(format!(
-                    "Browser '{}' does not support a configured private flag.",
-                    browser_name
-                )),
-                (None, None) => Ok(None),
-            }
-        }
+        BrowserRecognition::Known => match (trimmed, recognition.private_flag.as_deref()) {
+            (Some(flag), Some(expected)) if flag != expected => Err(format!(
+                "Browser '{}' only allows the private flag '{}'.",
+                browser_name, expected
+            )),
+            (_, Some(expected)) => Ok(Some(expected.to_string())),
+            (Some(_), None) => Err(format!(
+                "Browser '{}' does not support a configured private flag.",
+                browser_name
+            )),
+            (None, None) => Ok(None),
+        },
         BrowserRecognition::UnverifiedManual => {
             if trimmed.is_some() {
                 return Err(format!(
@@ -731,12 +583,7 @@ fn validate_private_flag_value(
                     browser_name
                 ));
             }
-
-            if manual_trust == Some(ManualBrowserTrust::UserConfirmed) {
-                Ok(None)
-            } else {
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 }
@@ -750,29 +597,6 @@ fn preferred_browser_name(display_name_hint: &str, path: &str) -> String {
     executable_name_from_path(path).unwrap_or_else(|| "Browser".to_string())
 }
 
-fn chromium_family_tokens() -> &'static [&'static str] {
-    &["chromium", "chrome", "brave", "vivaldi", "arc", "helium"]
-}
-
-fn firefox_family_tokens() -> &'static [&'static str] {
-    &[
-        "firefox",
-        "librewolf",
-        "waterfox",
-        "floorp",
-        "zen",
-        "tor browser",
-    ]
-}
-
-fn edge_family_tokens() -> &'static [&'static str] {
-    &["msedge", "microsoft edge", "\\edge\\"]
-}
-
-fn opera_family_tokens() -> &'static [&'static str] {
-    &["opera", "\\opera\\"]
-}
-
 fn browser_family_key(family: BrowserFamily) -> Option<&'static str> {
     match family {
         BrowserFamily::Chromium => Some("chrome"),
@@ -780,16 +604,6 @@ fn browser_family_key(family: BrowserFamily) -> Option<&'static str> {
         BrowserFamily::Edge => Some("edge"),
         BrowserFamily::Opera => Some("opera"),
         BrowserFamily::Unknown => None,
-    }
-}
-
-fn browser_family_label(family: Option<BrowserFamily>) -> &'static str {
-    match family {
-        Some(BrowserFamily::Chromium) => "Chromium",
-        Some(BrowserFamily::Firefox) => "Firefox",
-        Some(BrowserFamily::Edge) => "Edge",
-        Some(BrowserFamily::Opera) => "Opera",
-        _ => "supported",
     }
 }
 
@@ -1572,7 +1386,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_manual_browser_entries_clears_verified_trust_for_unknown_paths() {
+    fn normalize_manual_browser_entries_keeps_previously_verified_unknown_as_confirmed() {
         let path = temp_executable_path("custom-browser.exe");
         let mut config = test_app_config(vec![BrowserConfig {
             id: "manual-custom".to_string(),
@@ -1587,11 +1401,137 @@ mod tests {
 
         normalize_manual_browser_entries(&mut config);
         let browser = &config.browsers[0];
-        assert_eq!(browser.manual_trust, None);
+        assert_eq!(
+            browser.manual_trust,
+            Some(ManualBrowserTrust::UserConfirmed)
+        );
         assert_eq!(browser.private_flag, None);
+        assert!(validate_browser_for_launch(browser).is_ok());
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+    }
+
+    #[test]
+    fn normalize_manual_browser_entries_leaves_unconfirmed_unknown_unconfirmed() {
+        let path = temp_executable_path("custom-browser.exe");
+        let mut config = test_app_config(vec![BrowserConfig {
+            id: "manual-custom".to_string(),
+            name: "Custom Browser".to_string(),
+            path: path.to_string_lossy().to_string(),
+            private_flag: None,
+            icon_key: Some("generic".to_string()),
+            manual_trust: None,
+            source: BrowserSource::Manual,
+            is_hidden: false,
+        }]);
+
+        normalize_manual_browser_entries(&mut config);
+        assert_eq!(config.browsers[0].manual_trust, None);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+    }
+
+    #[test]
+    fn display_name_does_not_make_an_executable_a_known_browser() {
+        for name in [
+            "Google Chrome",
+            "Mozilla Firefox",
+            "Tor Browser",
+            "Microsoft Edge",
+        ] {
+            let result = classify_browser_path(r"C:\Tools\payload.exe", Some(name))
+                .expect("classification should succeed");
+            assert_eq!(result.recognition, BrowserRecognition::UnverifiedManual);
+            assert_eq!(result.private_flag, None);
+            // The name is still shown as typed.
+            assert_eq!(result.name, name);
+        }
+
+        let path = temp_executable_path("payload.exe");
+        let browser = BrowserConfig {
+            id: "manual-fake-chrome".to_string(),
+            name: "Google Chrome".to_string(),
+            path: path.to_string_lossy().to_string(),
+            private_flag: None,
+            icon_key: None,
+            manual_trust: None,
+            source: BrowserSource::Manual,
+            is_hidden: false,
+        };
+        let error = validate_browser_for_launch(&browser)
+            .expect_err("a renamed executable should need confirmation");
+        assert!(error.contains("needs explicit confirmation"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+    }
+
+    #[test]
+    fn browser_names_inside_unrelated_words_are_not_recognized() {
+        for path in [
+            r"C:\Users\Marcus\Tools\custom.exe",
+            r"C:\Tools\search.exe",
+            r"C:\Games\citizen.exe",
+            r"C:\Users\Zena\app.exe",
+            r"C:\Chromebook Tools\flash.exe",
+            r"C:\Cooperative\client.exe",
+            r"C:\Program Files\Firefox Helper\updater.exe",
+        ] {
+            let result = classify_browser_path(path, None).expect("classification should succeed");
+            assert_eq!(
+                result.recognition,
+                BrowserRecognition::UnverifiedManual,
+                "{path} should not be recognized"
+            );
+            assert_eq!(
+                result.private_flag, None,
+                "{path} should get no private flag"
+            );
+        }
+    }
+
+    #[test]
+    fn browsers_are_recognized_by_executable_name_or_install_path() {
+        for (path, family, private_flag) in [
+            (
+                r"D:\Portable\chrome.exe",
+                BrowserFamily::Chromium,
+                Some("--incognito"),
+            ),
+            (
+                r"D:\Portable\Arc.exe",
+                BrowserFamily::Chromium,
+                Some("--incognito"),
+            ),
+            (
+                r"D:\Portable\zen.exe",
+                BrowserFamily::Firefox,
+                Some("--private-window"),
+            ),
+            (
+                r"D:\Portable\firefox.exe",
+                BrowserFamily::Firefox,
+                Some("--private-window"),
+            ),
+            (
+                r"D:\Portable\msedge.exe",
+                BrowserFamily::Edge,
+                Some("--inprivate"),
+            ),
+            (
+                r"C:\Users\me\Desktop\Tor Browser\Browser\firefox.exe",
+                BrowserFamily::Firefox,
+                None,
+            ),
+        ] {
+            let result = classify_browser_path(path, Some("Whatever I typed"))
+                .expect("classification should succeed");
+            assert_eq!(result.recognition, BrowserRecognition::Known, "{path}");
+            assert_eq!(result.family, Some(family), "{path}");
+            assert_eq!(result.private_flag.as_deref(), private_flag, "{path}");
+        }
     }
 
     fn browser_at(path: &str) -> BrowserConfig {

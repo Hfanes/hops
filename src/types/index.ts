@@ -1,9 +1,6 @@
 export type BrowserSource = "detected" | "manual";
 export type ManualBrowserTrust = "verified" | "user_confirmed";
-export type BrowserRecognition =
-  | "known"
-  | "recognized_family"
-  | "unverified_manual";
+export type BrowserRecognition = "known" | "unverified_manual";
 
 export type RulePatternType =
   | "hostname"

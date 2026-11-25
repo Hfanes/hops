@@ -52,7 +52,6 @@ pub(crate) enum ManualBrowserTrust {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserRecognition {
     Known,
-    RecognizedFamily,
     UnverifiedManual,
 }
 
