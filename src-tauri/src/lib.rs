@@ -25,8 +25,6 @@ fn should_keep_tray_app_resident(exit_code: Option<i32>) -> bool {
 const CONFIG_FILENAME: &str = "config.json";
 const HOPS_APP_NAME: &str = "Hops";
 const HOPS_PROTOCOL_PROG_ID: &str = "HopsURL";
-const HOPS_HTML_PROG_ID: &str = "HopsHTML";
-const HOPS_CUSTOM_URI_SCHEME: &str = "Hops";
 const PICKER_WINDOW_LABEL: &str = "picker";
 const PICKER_SESSION_EVENT: &str = "picker-session";
 #[cfg(target_os = "windows")]

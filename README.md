@@ -139,11 +139,11 @@ Hops writes registration under `HKCU` for the current user, so admin rights are 
 
 When clicking `Register Hops`, the app writes:
 
-- `HKCU\Software\Classes\HopsURL`
-- `HKCU\Software\Classes\HopsHTML`
-- `HKCU\Software\Classes\Hops`
+- `HKCU\Software\Classes\HopsURL` (the `http`/`https` handler)
 - `HKCU\Software\Hops\Capabilities`
 - `HKCU\Software\RegisteredApplications` value `Hops=Software\Hops\Capabilities`
+
+Hops 0.1.6 and earlier also wrote `HKCU\Software\Classes\HopsHTML` (an `.html` association that could not open files) and `HKCU\Software\Classes\Hops` (an unused `hops:` link scheme). Installing a newer version removes both.
 
 This does not automatically force Windows defaults. You still choose Hops in Windows Default Apps for `http` and `https`.
 
@@ -152,7 +152,7 @@ To rollback:
 1. In Windows Default Apps, switch `http` and `https` away from Hops.
 2. In Hops Settings, click `Unregister Hops`.
 
-`Unregister Hops` removes the keys listed above from `HKCU`.
+`Unregister Hops` removes the keys listed above from `HKCU`. Uninstalling Hops removes them too.
 
 ## Development
 
