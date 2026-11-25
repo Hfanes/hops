@@ -358,6 +358,8 @@ fn build_picker_session(
     )
 }
 
+// Splitting these arguments into a struct is part of item 07.
+#[allow(clippy::too_many_arguments)]
 fn build_picker_session_with_running_processes<F>(
     config: &AppConfig,
     url: &str,
@@ -458,6 +460,8 @@ where
     resolve_route_with_running_processes(config, url, running)
 }
 
+// Splitting these arguments into a struct is part of item 07.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_picker_window(
     app: &AppHandle,
     state: &PickerState,
@@ -481,6 +485,8 @@ pub(crate) fn show_picker_window(
     show_picker_window_with_session(app, state, session)
 }
 
+// Splitting these arguments into a struct is part of item 07.
+#[allow(clippy::too_many_arguments)]
 fn show_picker_window_with_running_processes<F>(
     app: &AppHandle,
     state: &PickerState,
