@@ -4,8 +4,15 @@ name: CI
 # build, and the Rust format, lint and test checks. Windows only, because most
 # of the backend is behind `cfg(target_os = "windows")` and the repository is
 # public, so Windows runners cost nothing.
+#
+# Pull requests check the code merged with main, which is what the ruleset
+# requires before merging. Pushes to main (every merge) check main again and
+# keep its Rust cache warm, so new pull requests start from it.
 on:
   pull_request:
+    branches:
+      - main
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -33,8 +40,8 @@ jobs:
 
       # The Rust steps take minutes, so they only run when the PR touches the
       # backend or this workflow. The job itself always runs, because a
-      # required status check that never reports blocks the merge. Manual runs
-      # always check Rust.
+      # required status check that never reports blocks the merge. Pushes to
+      # main and manual runs always check Rust, which also refreshes the cache.
       - name: Detect Rust changes
         id: changes
         shell: bash
