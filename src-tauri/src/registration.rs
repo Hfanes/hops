@@ -1,7 +1,7 @@
 use crate::models::BrowserRegistrationStatus;
 #[cfg(target_os = "windows")]
 use crate::CREATE_NO_WINDOW;
-use crate::{HOPS_APP_NAME, HOPS_CUSTOM_URI_SCHEME, HOPS_HTML_PROG_ID, HOPS_PROTOCOL_PROG_ID};
+use crate::{HOPS_APP_NAME, HOPS_PROTOCOL_PROG_ID};
 
 #[cfg(target_os = "windows")]
 use std::ffi::OsStr;
@@ -190,117 +190,101 @@ fn read_url_user_choice_prog_id(scheme: &str) -> Option<String> {
         .and_then(|key| key.get_value::<String, _>("ProgId").ok())
 }
 
+/// `HKCU` keys that belong to Hops. Unregistering deletes them, and so does
+/// the uninstaller (`src-tauri/windows/hooks.nsh`).
+const OWNED_KEYS: [&str; 2] = ["Software\\Classes\\HopsURL", "Software\\Hops"];
+
+/// `HKCU` keys written by Hops 0.1.6 and earlier that are no longer used: the
+/// `.htm`/`.html` association (its command could not open files) and the
+/// `hops:` custom scheme (nothing handled it, and any web page could launch
+/// Hops through it). Registering, unregistering and installing delete them.
+const LEGACY_KEYS: [&str; 3] = [
+    "Software\\Classes\\HopsHTML",
+    "Software\\Classes\\Hops",
+    "Software\\Hops\\Capabilities\\FileAssociations",
+];
+
+const CAPABILITIES_KEY: &str = "Software\\Hops\\Capabilities";
+const REGISTERED_APPLICATIONS_KEY: &str = "Software\\RegisteredApplications";
+
+/// One registry value under `HKCU`. An empty `name` is the key's default value.
+#[derive(Debug, PartialEq, Eq)]
+struct RegistryValue {
+    key: String,
+    name: &'static str,
+    data: String,
+}
+
+impl RegistryValue {
+    fn new(key: impl Into<String>, name: &'static str, data: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            name,
+            data: data.into(),
+        }
+    }
+}
+
+/// Everything "Register Hops" writes: the `http`/`https` handler class and the
+/// capabilities that list Hops in Windows Default Apps.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn registration_values(executable: &str) -> Vec<RegistryValue> {
+    let url_class = format!("Software\\Classes\\{HOPS_PROTOCOL_PROG_ID}");
+    let url_associations = format!("{CAPABILITIES_KEY}\\URLAssociations");
+
+    vec![
+        RegistryValue::new(&url_class, "", "Hops URL Handler"),
+        RegistryValue::new(&url_class, "URL Protocol", ""),
+        RegistryValue::new(
+            format!("{url_class}\\DefaultIcon"),
+            "",
+            format!("\"{executable}\",0"),
+        ),
+        RegistryValue::new(
+            format!("{url_class}\\shell\\open\\command"),
+            "",
+            format!("\"{executable}\" --url \"%1\""),
+        ),
+        RegistryValue::new(CAPABILITIES_KEY, "ApplicationName", HOPS_APP_NAME),
+        RegistryValue::new(
+            CAPABILITIES_KEY,
+            "ApplicationDescription",
+            "Hops routes external links to the right browser.",
+        ),
+        RegistryValue::new(&url_associations, "http", HOPS_PROTOCOL_PROG_ID),
+        RegistryValue::new(&url_associations, "https", HOPS_PROTOCOL_PROG_ID),
+        RegistryValue::new(REGISTERED_APPLICATIONS_KEY, HOPS_APP_NAME, CAPABILITIES_KEY),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn delete_keys(hkcu: &RegKey, keys: &[&str]) {
+    for key in keys {
+        // A missing key is already the state we want.
+        let _ = hkcu.delete_subkey_all(key);
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn register_hops_as_browser_windows() -> Result<(), String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("Could not resolve executable path: {error}"))?;
-    let executable_string = executable.to_string_lossy().to_string();
-    let command_with_url = format!("\"{executable_string}\" --url \"%1\"");
+    let executable = executable.to_string_lossy();
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    delete_keys(&hkcu, &LEGACY_KEYS);
 
-    let (hops_url_key, _) = hkcu
-        .create_subkey(format!("Software\\Classes\\{HOPS_PROTOCOL_PROG_ID}"))
-        .map_err(|error| format!("Could not create Hops URL class key: {error}"))?;
-    hops_url_key
-        .set_value("", &"Hops URL Handler")
-        .map_err(|error| format!("Could not write HopsURL default value: {error}"))?;
-    hops_url_key
-        .set_value("URL Protocol", &"")
-        .map_err(|error| format!("Could not write HopsURL protocol marker: {error}"))?;
-
-    let (hops_url_icon, _) = hkcu
-        .create_subkey(format!(
-            "Software\\Classes\\{HOPS_PROTOCOL_PROG_ID}\\DefaultIcon"
-        ))
-        .map_err(|error| format!("Could not create HopsURL icon key: {error}"))?;
-    hops_url_icon
-        .set_value("", &format!("\"{executable_string}\",0"))
-        .map_err(|error| format!("Could not write HopsURL icon value: {error}"))?;
-
-    let (hops_url_command, _) = hkcu
-        .create_subkey(format!(
-            "Software\\Classes\\{HOPS_PROTOCOL_PROG_ID}\\shell\\open\\command"
-        ))
-        .map_err(|error| format!("Could not create HopsURL command key: {error}"))?;
-    hops_url_command
-        .set_value("", &command_with_url)
-        .map_err(|error| format!("Could not write HopsURL command value: {error}"))?;
-
-    let (hops_html_key, _) = hkcu
-        .create_subkey(format!("Software\\Classes\\{HOPS_HTML_PROG_ID}"))
-        .map_err(|error| format!("Could not create Hops HTML class key: {error}"))?;
-    hops_html_key
-        .set_value("", &"Hops HTML Document")
-        .map_err(|error| format!("Could not write HopsHTML default value: {error}"))?;
-
-    let (hops_html_command, _) = hkcu
-        .create_subkey(format!(
-            "Software\\Classes\\{HOPS_HTML_PROG_ID}\\shell\\open\\command"
-        ))
-        .map_err(|error| format!("Could not create HopsHTML command key: {error}"))?;
-    hops_html_command
-        .set_value("", &command_with_url)
-        .map_err(|error| format!("Could not write HopsHTML command value: {error}"))?;
-
-    let (hops_custom_scheme_key, _) = hkcu
-        .create_subkey(format!("Software\\Classes\\{HOPS_CUSTOM_URI_SCHEME}"))
-        .map_err(|error| format!("Could not create Hops custom scheme key: {error}"))?;
-    hops_custom_scheme_key
-        .set_value("", &"Hops Custom URI")
-        .map_err(|error| format!("Could not write Hops custom scheme name: {error}"))?;
-    hops_custom_scheme_key
-        .set_value("URL Protocol", &"")
-        .map_err(|error| format!("Could not write Hops custom scheme marker: {error}"))?;
-
-    let (hops_custom_scheme_command, _) = hkcu
-        .create_subkey(format!(
-            "Software\\Classes\\{HOPS_CUSTOM_URI_SCHEME}\\shell\\open\\command"
-        ))
-        .map_err(|error| format!("Could not create Hops custom scheme command key: {error}"))?;
-    hops_custom_scheme_command
-        .set_value("", &command_with_url)
-        .map_err(|error| format!("Could not write Hops custom scheme command: {error}"))?;
-
-    let (capabilities_key, _) = hkcu
-        .create_subkey("Software\\Hops\\Capabilities")
-        .map_err(|error| format!("Could not create Hops capabilities key: {error}"))?;
-    capabilities_key
-        .set_value("ApplicationName", &HOPS_APP_NAME)
-        .map_err(|error| format!("Could not write ApplicationName: {error}"))?;
-    capabilities_key
-        .set_value(
-            "ApplicationDescription",
-            &"Hops routes external links to the right browser.",
-        )
-        .map_err(|error| format!("Could not write ApplicationDescription: {error}"))?;
-
-    let (url_associations, _) = hkcu
-        .create_subkey("Software\\Hops\\Capabilities\\URLAssociations")
-        .map_err(|error| format!("Could not create URLAssociations key: {error}"))?;
-    url_associations
-        .set_value("http", &HOPS_PROTOCOL_PROG_ID)
-        .map_err(|error| format!("Could not write HTTP association: {error}"))?;
-    url_associations
-        .set_value("https", &HOPS_PROTOCOL_PROG_ID)
-        .map_err(|error| format!("Could not write HTTPS association: {error}"))?;
-
-    let (file_associations, _) = hkcu
-        .create_subkey("Software\\Hops\\Capabilities\\FileAssociations")
-        .map_err(|error| format!("Could not create FileAssociations key: {error}"))?;
-    file_associations
-        .set_value(".htm", &HOPS_HTML_PROG_ID)
-        .map_err(|error| format!("Could not write .htm association: {error}"))?;
-    file_associations
-        .set_value(".html", &HOPS_HTML_PROG_ID)
-        .map_err(|error| format!("Could not write .html association: {error}"))?;
-
-    let (registered_apps_key, _) = hkcu
-        .create_subkey("Software\\RegisteredApplications")
-        .map_err(|error| format!("Could not create RegisteredApplications key: {error}"))?;
-    registered_apps_key
-        .set_value(HOPS_APP_NAME, &"Software\\Hops\\Capabilities")
-        .map_err(|error| format!("Could not register Hops in RegisteredApplications: {error}"))?;
+    for value in registration_values(&executable) {
+        let (key, _) = hkcu
+            .create_subkey(&value.key)
+            .map_err(|error| format!("Could not create HKCU\\{}: {error}", value.key))?;
+        key.set_value(value.name, &value.data).map_err(|error| {
+            format!(
+                "Could not write '{}' in HKCU\\{}: {error}",
+                value.name, value.key
+            )
+        })?;
+    }
 
     Ok(())
 }
@@ -309,20 +293,80 @@ fn register_hops_as_browser_windows() -> Result<(), String> {
 fn unregister_hops_as_browser_windows() -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
 
-    if let Ok(registered_apps) =
-        hkcu.open_subkey_with_flags("Software\\RegisteredApplications", KEY_WRITE)
+    if let Ok(registered_apps) = hkcu.open_subkey_with_flags(REGISTERED_APPLICATIONS_KEY, KEY_WRITE)
     {
         let _ = registered_apps.delete_value(HOPS_APP_NAME);
     }
 
-    for path in [
-        "Software\\Hops",
-        &format!("Software\\Classes\\{HOPS_PROTOCOL_PROG_ID}"),
-        &format!("Software\\Classes\\{HOPS_HTML_PROG_ID}"),
-        &format!("Software\\Classes\\{HOPS_CUSTOM_URI_SCHEME}"),
-    ] {
-        let _ = hkcu.delete_subkey_all(path);
-    }
+    delete_keys(&hkcu, &OWNED_KEYS);
+    delete_keys(&hkcu, &LEGACY_KEYS);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXECUTABLE: &str = "C:\\Users\\Test\\AppData\\Local\\hops\\hops.exe";
+
+    fn is_under(key: &str, root: &str) -> bool {
+        let key = key.to_ascii_lowercase();
+        let root = root.to_ascii_lowercase();
+        key == root || key.starts_with(&format!("{root}\\"))
+    }
+
+    #[test]
+    fn registration_only_writes_keys_hops_owns() {
+        for value in registration_values(EXECUTABLE) {
+            let owned = OWNED_KEYS.iter().any(|root| is_under(&value.key, root))
+                || value.key == REGISTERED_APPLICATIONS_KEY;
+            assert!(owned, "unexpected key HKCU\\{}", value.key);
+            assert!(
+                !LEGACY_KEYS.iter().any(|root| is_under(&value.key, root)),
+                "registration writes legacy key HKCU\\{}",
+                value.key
+            );
+        }
+    }
+
+    #[test]
+    fn registration_has_no_custom_scheme_or_file_association() {
+        let values = registration_values(EXECUTABLE);
+
+        let url_protocol_keys: Vec<_> = values
+            .iter()
+            .filter(|value| value.name == "URL Protocol")
+            .map(|value| value.key.as_str())
+            .collect();
+        assert_eq!(url_protocol_keys, ["Software\\Classes\\HopsURL"]);
+
+        assert!(values
+            .iter()
+            .all(|value| !value.key.contains("FileAssociations")));
+    }
+
+    #[test]
+    fn uninstaller_hook_deletes_every_key_hops_writes() {
+        let hooks = include_str!("../windows/hooks.nsh");
+
+        for key in OWNED_KEYS.iter().chain(LEGACY_KEYS.iter()) {
+            let line = format!("DeleteRegKey HKCU \"{key}\"");
+            assert!(hooks.contains(&line), "hooks.nsh is missing: {line}");
+        }
+
+        let line =
+            format!("DeleteRegValue HKCU \"{REGISTERED_APPLICATIONS_KEY}\" \"{HOPS_APP_NAME}\"");
+        assert!(hooks.contains(&line), "hooks.nsh is missing: {line}");
+    }
+
+    #[test]
+    fn registration_command_passes_the_url_argument() {
+        let values = registration_values(EXECUTABLE);
+        let command = values
+            .iter()
+            .find(|value| value.key.ends_with("\\shell\\open\\command"))
+            .expect("command value");
+        assert_eq!(command.data, format!("\"{EXECUTABLE}\" --url \"%1\""));
+    }
 }

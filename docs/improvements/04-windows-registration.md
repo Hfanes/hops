@@ -9,7 +9,7 @@ numbering of that file) writes these keys under `HKCU`:
 - `Software\Classes\HopsHTML` + `FileAssociations` `.htm`/`.html`
   (`registration.rs:230-244`, `288-296`). **Broken.** The command is
   `"hops.exe" --url "%1"`. For a file, `%1` is a filesystem path, and
-  `extract_url_from_args` (`picker.rs:85`) only accepts `http://` or
+  `extract_url_from_args` (`picker.rs:88`) only accepts `http://` or
   `https://`, so opening an `.html` file with Hops just shows the settings
   window. Windows also often wants a `.html` handler before it lists an app as
   a full browser.
@@ -42,7 +42,44 @@ data table belongs here rather than in item 07.
 
 ## Decisions
 
-_Filled in during the discussion._
+Re-verification notes (2026-11-25):
+
+- The Tauri NSIS template can run the old uninstaller with `/UPDATE` during
+  an upgrade (`$UpdateMode`). Any uninstall cleanup must skip when
+  `$UpdateMode = 1`, or every update would wipe the registration and Hops
+  would stop being the default browser.
+- `README.md` ("Windows Registry Keys Touched") lists the keys and must be
+  updated to match.
+- `tauri-plugin-autostart` (via `auto-launch`) writes a value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which is also left
+  behind on uninstall.
+
+1. **Custom scheme: removed.** No planned use (such as an extension calling
+   `hops://open?url=...`). Today it only opens settings, and any web page can
+   trigger it. If it is ever needed, it comes back with its own validation.
+2. **`.htm`/`.html`: association dropped (option a).** Tested on 0.1.6
+   installed: with `Capabilities\FileAssociations` and `Classes\HopsHTML`
+   removed, Windows still lists Hops in Default Apps with HTTP and HTTPS and
+   offers "Make Hops your default browser". Option (c) is not needed.
+3. **Uninstall cleanup: NSIS `NSIS_HOOK_POSTUNINSTALL` hook**, guarded by
+   `$UpdateMode <> 1`. It is declarative, does not depend on the exe still
+   existing, and avoids a `--unregister` flag that the single-instance plugin
+   would forward to the running tray instance. A Rust test checks that
+   `hooks.nsh` deletes every root key in the registration table, so the two
+   lists cannot drift. The Tauri template already deletes the autostart `Run`
+   value (skipped on update); the hook also deletes the matching
+   `Explorer\StartupApproved\Run` value that `auto-launch` writes.
+
+   **Accepted trade-off:** installing a newer `.exe` over an existing install
+   with the default "uninstall before installing" choice runs the full
+   uninstaller without `/UPDATE` (`PageLeaveReinstall` in the template), so
+   the hook removes the registration and the user must click Register and pick
+   Hops in Default Apps again. The in-app updater passes `/UPDATE` and is not
+   affected, and neither is choosing "do not uninstall". Decided not to handle
+   or document it: few users, and updates normally go through the updater.
+4. **Existing installs: an `NSIS_HOOK_POSTINSTALL` hook deletes
+   `HKCU\Software\Classes\Hops`**, which runs on every install and update, and
+   `register` also deletes it. No work is added at startup.
 
 ## Proposal
 
@@ -60,12 +97,12 @@ _Filled in during the discussion._
 
 ## Acceptance criteria
 
-- [ ] `hops://anything` no longer launches Hops after registering (fresh and
+- [x] `hops://anything` no longer launches Hops after registering (fresh and
       existing installs).
-- [ ] `.html` behavior matches the decision; no path that just opens settings.
-- [ ] After uninstall, no `Hops*` keys remain under `HKCU\Software\Classes`,
+- [x] `.html` behavior matches the decision; no path that just opens settings.
+- [x] After uninstall, no `Hops*` keys remain under `HKCU\Software\Classes`,
       `HKCU\Software\Hops`, or `RegisteredApplications`.
-- [ ] Registration status in settings still reports correctly.
+- [x] Registration status in settings still reports correctly.
 
 ## Verification
 
@@ -77,6 +114,6 @@ _Filled in during the discussion._
 ## Notes and risks
 
 - Windows may refuse to list Hops as a browser without an `.html`
-  association. Test option 2(a) before committing to it.
+  association. Tested: it still lists Hops (Decision 2).
 - Registry changes need `SHChangeNotify` (already done) to show up in
   Settings.
