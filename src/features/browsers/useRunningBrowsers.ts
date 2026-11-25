@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listRunningBrowserIds } from "../../services/tauri";
+import {
+  listMissingBrowserIds,
+  listRunningBrowserIds,
+} from "../../services/tauri";
 import type { AppConfig, TabId } from "../../types";
 
 const RUNNING_STATE_REFRESH_THROTTLE_MS = 1000;
 
 /**
- * Which configured browsers are running. Refreshed when the Browsers tab opens
- * and when the window regains focus while it is open (throttled), never on a
- * timer.
+ * Which configured browsers are running, and which are no longer installed.
+ * Refreshed when the Browsers tab opens and when the window regains focus
+ * while it is open (throttled), never on a timer.
  */
 export function useRunningBrowsers({
   activeTab,
@@ -20,6 +23,9 @@ export function useRunningBrowsers({
   configRef: { readonly current: AppConfig | null };
 }) {
   const [runningBrowserIds, setRunningBrowserIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [missingBrowserIds, setMissingBrowserIds] = useState<Set<string>>(
     new Set(),
   );
   const isRefreshInFlightRef = useRef(false);
@@ -42,8 +48,12 @@ export function useRunningBrowsers({
     lastRefreshAtRef.current = now;
 
     try {
-      const runningIds = await listRunningBrowserIds();
+      const [runningIds, missingIds] = await Promise.all([
+        listRunningBrowserIds(),
+        listMissingBrowserIds(),
+      ]);
       setRunningBrowserIds(new Set(runningIds));
+      setMissingBrowserIds(new Set(missingIds));
     } catch {
       // Running-state refresh should be non-blocking.
     } finally {
@@ -89,5 +99,5 @@ export function useRunningBrowsers({
     };
   }, [activeTab, isLoading]);
 
-  return { runningBrowserIds, refreshRunningState };
+  return { runningBrowserIds, missingBrowserIds, refreshRunningState };
 }

@@ -361,7 +361,33 @@ fn is_hops_executable(path: &str) -> bool {
         .is_ok_and(|current| normalize_path(&current.to_string_lossy()) == normalized)
 }
 
+/// Whether the browser's executable is on disk. Kept apart from
+/// [`validate_browser_entry`] so an uninstalled browser does not block saving
+/// unrelated settings; it only fails when Hops tries to launch it.
+pub(crate) fn browser_executable_exists(browser: &BrowserConfig) -> bool {
+    Path::new(browser.path.trim()).is_file()
+}
+
+/// Everything [`validate_browser_entry`] checks, plus that the executable is
+/// still on disk. Used right before launching.
 pub(crate) fn validate_browser_for_launch(
+    browser: &BrowserConfig,
+) -> Result<ValidatedBrowserLaunch, String> {
+    let validated = validate_browser_entry(browser)?;
+    if !browser_executable_exists(browser) {
+        return Err(format!(
+            "{} is no longer installed at {}.",
+            browser.name, validated.executable_path
+        ));
+    }
+
+    Ok(validated)
+}
+
+/// Checks a browser entry from its fields alone, without touching the disk:
+/// a `.exe` path that is not Hops, an allowed private flag, and item 02's
+/// trust rules for manual browsers. Runs on every config save.
+pub(crate) fn validate_browser_entry(
     browser: &BrowserConfig,
 ) -> Result<ValidatedBrowserLaunch, String> {
     let path = browser.path.trim();
@@ -382,10 +408,6 @@ pub(crate) fn validate_browser_for_launch(
 
     if is_hops_executable(path) {
         return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
-    }
-
-    if !Path::new(path).exists() {
-        return Err(format!("Browser executable does not exist: {path}"));
     }
 
     let recognition = classify_browser_path(path, Some(browser.name.as_str()))?;
@@ -1621,6 +1643,31 @@ mod tests {
         browser.manual_trust = Some(ManualBrowserTrust::UserConfirmed);
         let error = validate_browser_for_launch(&browser).expect_err("Hops must not launch");
         assert_eq!(error, HOPS_SELF_LAUNCH_ERROR);
+    }
+
+    #[test]
+    fn missing_executable_passes_entry_checks_but_not_launch() {
+        let path = temp_executable_path("chrome.exe");
+        let mut browser = browser_at(&path.to_string_lossy());
+        browser.private_flag = Some("--incognito".to_string());
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+
+        assert!(!browser_executable_exists(&browser));
+        let entry = validate_browser_entry(&browser).expect("entry checks do not touch the disk");
+        assert_eq!(entry.private_flag.as_deref(), Some("--incognito"));
+        let error = validate_browser_for_launch(&browser).expect_err("launch needs the exe");
+        assert!(error.contains("no longer installed"), "{error}");
+    }
+
+    #[test]
+    fn entry_checks_still_enforce_trust_for_a_missing_manual_browser() {
+        let mut browser = browser_at(r"C:\Missing\payload.exe");
+        browser.source = BrowserSource::Manual;
+        browser.manual_trust = None;
+
+        let error = validate_browser_entry(&browser).expect_err("unconfirmed manual browser");
+        assert!(error.contains("needs explicit confirmation"), "{error}");
     }
 
     #[test]

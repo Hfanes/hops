@@ -36,6 +36,8 @@ const PICKER_MENU_MIN_HEIGHT: u32 = 128;
 const PICKER_MENU_MAX_HEIGHT: u32 = 340;
 const PICKER_MENU_ROW_HEIGHT: u32 = 46;
 const PICKER_MENU_CHROME_HEIGHT: u32 = 92;
+/// Room for a notice such as a failed launch and its hint, about six lines.
+const PICKER_MENU_NOTICE_HEIGHT: u32 = 120;
 const PICKER_CURSOR_OFFSET_X: i32 = 6;
 const PICKER_CURSOR_OFFSET_Y: i32 = 10;
 const PICKER_IDLE_DESTROY_SECONDS: u64 = 15;
@@ -143,6 +145,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::load_config,
+            commands::take_config_recovery_notice,
             commands::get_config_file_path,
             commands::open_config_folder,
             commands::save_config,
@@ -150,6 +153,7 @@ pub fn run() {
             commands::validate_regex_patterns,
             commands::refresh_browsers,
             commands::list_running_browser_ids,
+            commands::list_missing_browser_ids,
             commands::preview_route_with_config,
             commands::route_and_open_with_config,
             commands::open_url,

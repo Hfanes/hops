@@ -1,8 +1,10 @@
-use crate::browsers::{current_running_processes, RunningProcessSnapshot};
+use crate::browsers::{
+    browser_executable_exists, current_running_processes, RunningProcessSnapshot,
+};
 use crate::config::load_or_init_config;
 use crate::models::{
-    AppConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction, RouteDecision,
-    RouteReason,
+    AppConfig, BrowserConfig, PickerBrowserEntry, PickerLaunchSource, PickerSession, RouteAction,
+    RouteDecision, RouteReason,
 };
 use crate::routing::{
     normalize_http_url, open_url_with_browser, picker_decision,
@@ -11,7 +13,8 @@ use crate::routing::{
 use crate::{
     PICKER_CURSOR_OFFSET_X, PICKER_CURSOR_OFFSET_Y, PICKER_IDLE_DESTROY_SECONDS,
     PICKER_MENU_CHROME_HEIGHT, PICKER_MENU_MAX_HEIGHT, PICKER_MENU_MIN_HEIGHT,
-    PICKER_MENU_ROW_HEIGHT, PICKER_MENU_WIDTH, PICKER_SESSION_EVENT, PICKER_WINDOW_LABEL,
+    PICKER_MENU_NOTICE_HEIGHT, PICKER_MENU_ROW_HEIGHT, PICKER_MENU_WIDTH, PICKER_SESSION_EVENT,
+    PICKER_WINDOW_LABEL,
 };
 use std::sync::Mutex;
 use std::thread;
@@ -137,9 +140,14 @@ pub(crate) fn hide_settings_window(app: &AppHandle) {
     }
 }
 
-fn picker_window_height(browser_count: usize) -> u32 {
+fn picker_window_height(browser_count: usize, has_notice: bool) -> u32 {
     let browser_rows_height = browser_count as u32 * PICKER_MENU_ROW_HEIGHT;
-    let desired = PICKER_MENU_CHROME_HEIGHT + browser_rows_height;
+    let notice_height = if has_notice {
+        PICKER_MENU_NOTICE_HEIGHT
+    } else {
+        0
+    };
+    let desired = PICKER_MENU_CHROME_HEIGHT + notice_height + browser_rows_height;
     desired.clamp(PICKER_MENU_MIN_HEIGHT, PICKER_MENU_MAX_HEIGHT)
 }
 
@@ -346,6 +354,7 @@ fn build_picker_session(
         preferred_browser_id,
         preferred_private_mode,
         &mut running,
+        &browser_executable_exists,
     )
 }
 
@@ -357,16 +366,18 @@ fn build_picker_session_with_running_processes<F>(
     preferred_browser_id: Option<&str>,
     preferred_private_mode: bool,
     running: &mut RunningProcessSnapshot<F>,
+    is_installed: &dyn Fn(&BrowserConfig) -> bool,
 ) -> Result<PickerSession, String>
 where
     F: FnMut() -> std::collections::HashSet<String>,
 {
     let normalized_url = normalize_http_url(url)?.to_string();
 
+    // Uninstalled browsers are left out: picking one could only fail.
     let mut browsers: Vec<PickerBrowserEntry> = config
         .browsers
         .iter()
-        .filter(|browser| !browser.is_hidden)
+        .filter(|browser| !browser.is_hidden && is_installed(browser))
         .map(|browser| PickerBrowserEntry {
             id: browser.id.clone(),
             name: browser.name.clone(),
@@ -395,6 +406,7 @@ where
         always_show_picker: config.always_show_picker,
         alt_pressed: is_alt_pressed(),
         browsers,
+        notice: None,
     })
 }
 
@@ -493,6 +505,7 @@ where
         preferred_browser_id,
         preferred_private_mode,
         running,
+        &browser_executable_exists,
     )?;
     show_picker_window_with_session(app, state, session)
 }
@@ -505,7 +518,7 @@ fn show_picker_window_with_session(
     store_picker_session(state, session.clone())?;
 
     let window = ensure_picker_window(app)?;
-    let menu_height = picker_window_height(session.browsers.len());
+    let menu_height = picker_window_height(session.browsers.len(), session.notice.is_some());
     let resize_error =
         |error: tauri::Error| format!("Could not resize picker window during picker show: {error}");
     let move_error =
@@ -565,6 +578,39 @@ fn show_picker_window_with_session(
     Ok(())
 }
 
+/// Points to the fix: the picker cannot change the config, and without this
+/// every link routed to the broken browser keeps landing in the picker.
+const LAUNCH_FAILED_HINT: &str =
+    "To stop seeing this, open Settings from the Hops tray icon and remove the browser or pick another one.";
+
+/// The picker shown when the routed browser could not be launched: the
+/// failed browser is not preselected, and the error is shown as a notice
+/// followed by how to fix it.
+fn launch_failed_picker_session<F>(
+    config: &AppConfig,
+    url: &str,
+    private_mode: bool,
+    error: String,
+    running: &mut RunningProcessSnapshot<F>,
+    is_installed: &dyn Fn(&BrowserConfig) -> bool,
+) -> Result<PickerSession, String>
+where
+    F: FnMut() -> std::collections::HashSet<String>,
+{
+    let mut session = build_picker_session_with_running_processes(
+        config,
+        url,
+        PickerLaunchSource::Route,
+        RouteReason::BrowserLaunchFailed,
+        None,
+        private_mode,
+        running,
+        is_installed,
+    )?;
+    session.notice = Some(format!("{error} {LAUNCH_FAILED_HINT}"));
+    Ok(session)
+}
+
 pub(crate) fn handle_incoming_url(
     app: &AppHandle,
     state: &PickerState,
@@ -602,7 +648,23 @@ pub(crate) fn handle_incoming_url(
     if decision.action == RouteAction::OpenBrowser {
         hide_picker_window_internal(app, state)?;
         if let Some(browser_id) = decision.browser_id.as_deref() {
-            open_url_with_browser(&config, browser_id, url, decision.private_mode)?;
+            if let Err(error) =
+                open_url_with_browser(&config, browser_id, url, decision.private_mode)
+            {
+                // Without this the link would be lost: nothing is shown when
+                // a routed launch fails, and the packaged app has no console.
+                cancel_picker_idle_destroy(state)?;
+                let session = launch_failed_picker_session(
+                    &config,
+                    url,
+                    decision.private_mode,
+                    error,
+                    &mut running,
+                    &browser_executable_exists,
+                )?;
+                show_picker_window_with_session(app, state, session)?;
+                return Ok(picker_decision(RouteReason::BrowserLaunchFailed));
+            }
         }
     } else {
         show_picker_window_with_running_processes(
@@ -712,6 +774,7 @@ mod tests {
             decision.browser_id.as_deref(),
             decision.private_mode,
             running,
+            &|_| true,
         )
         .expect("picker session should build")
     }
@@ -946,6 +1009,7 @@ mod tests {
             Some(preferred.id.as_str()),
             false,
             &mut running,
+            &|_| true,
         )
         .expect("picker session should build");
 
@@ -978,6 +1042,7 @@ mod tests {
             None,
             false,
             &mut running,
+            &|_| true,
         )
         .expect("picker session should build");
 
@@ -1009,6 +1074,7 @@ mod tests {
             None,
             false,
             &mut running,
+            &|_| true,
         )
         .expect("picker session should build");
 
@@ -1037,6 +1103,7 @@ mod tests {
             None,
             false,
             &mut running,
+            &|_| true,
         )
         .expect("picker session should build");
 
@@ -1046,5 +1113,53 @@ mod tests {
             .map(|browser| browser.id.as_str())
             .collect();
         assert_eq!(browser_ids, vec!["arc", "brave", "zen"]);
+    }
+
+    #[test]
+    fn picker_leaves_out_browsers_that_are_not_installed() {
+        let installed = manual_browser("brave", "Brave");
+        let missing = manual_browser("opera", "Opera");
+        let config = test_app_config(vec![installed.clone(), missing.clone()]);
+        let mut running = running_snapshot(HashSet::new());
+
+        let session = build_picker_session_with_running_processes(
+            &config,
+            "https://example.com",
+            PickerLaunchSource::Route,
+            RouteReason::NoMatch,
+            None,
+            false,
+            &mut running,
+            &|browser| browser.id != missing.id,
+        )
+        .expect("picker session should build");
+
+        let browser_ids: Vec<&str> = session.browsers.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(browser_ids, vec![installed.id.as_str()]);
+        assert_eq!(session.notice, None);
+    }
+
+    #[test]
+    fn launch_failure_picker_explains_why_and_preselects_nothing() {
+        let config = test_app_config(vec![manual_browser("brave", "Brave")]);
+        let mut running = running_snapshot(HashSet::new());
+
+        let session = launch_failed_picker_session(
+            &config,
+            "https://example.com",
+            true,
+            "Opera is no longer installed.".to_string(),
+            &mut running,
+            &|_| true,
+        )
+        .expect("picker session should build");
+
+        assert_eq!(session.reason, RouteReason::BrowserLaunchFailed);
+        assert_eq!(session.preferred_browser_id, None);
+        assert!(session.preferred_private_mode);
+        assert_eq!(
+            session.notice.as_deref(),
+            Some(format!("Opera is no longer installed. {LAUNCH_FAILED_HINT}").as_str())
+        );
     }
 }

@@ -24,7 +24,8 @@ export type RouteReason =
   | "default_browser_not_running"
   | "no_match"
   | "ctrl_shift_click"
-  | "manual_open";
+  | "manual_open"
+  | "browser_launch_failed";
 export type ThemePreference = "light" | "dark";
 
 export interface BrowserConfig {
@@ -123,6 +124,8 @@ export interface PickerSession {
   alwaysShowPicker: boolean;
   altPressed: boolean;
   browsers: PickerBrowserEntry[];
+  /** Why the picker opened instead of a browser, e.g. a failed launch. */
+  notice: string | null;
 }
 
 export type TabId = "settings" | "browsers" | "rules" | "router" | "about";

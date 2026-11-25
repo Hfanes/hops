@@ -4,6 +4,7 @@ import type { BrowserConfig } from "../../types";
 export function BrowsersTab({
   browsers,
   runningBrowserIds,
+  missingBrowserIds,
   savingBrowserIds,
   pendingBrowserIds,
   failedBrowserIds,
@@ -14,6 +15,7 @@ export function BrowsersTab({
 }: {
   browsers: BrowserConfig[];
   runningBrowserIds: Set<string>;
+  missingBrowserIds: Set<string>;
   savingBrowserIds: Set<string>;
   pendingBrowserIds: Set<string>;
   failedBrowserIds: Set<string>;
@@ -62,6 +64,14 @@ export function BrowsersTab({
                 ) : null}
                 {runningBrowserIds.has(browser.id) ? (
                   <span className="badge running">running</span>
+                ) : null}
+                {missingBrowserIds.has(browser.id) ? (
+                  <span
+                    className="badge warning"
+                    title="The executable is no longer at this path. Links routed here open the picker instead."
+                  >
+                    missing
+                  </span>
                 ) : null}
                 {browser.isHidden ? (
                   <span className="badge warning">hidden</span>

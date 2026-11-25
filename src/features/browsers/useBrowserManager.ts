@@ -364,9 +364,26 @@ export function useBrowserManager({
   async function handleRefreshBrowsers() {
     setIsRefreshing(true);
     try {
+      const previousRules = configRef.current?.rules ?? [];
       const refreshed = await refreshBrowsers();
       applyLoadedConfig(refreshed);
-      setStatus({ kind: "success", text: "Browser detection refreshed." });
+      // Rules for a browser that is no longer installed are removed with it.
+      const keptRuleIds = new Set(refreshed.rules.map((rule) => rule.id));
+      const removedRules = previousRules.filter(
+        (rule) => !keptRuleIds.has(rule.id),
+      ).length;
+      setStatus(
+        removedRules > 0
+          ? {
+              kind: "warning",
+              text: `Browser detection refreshed. ${removedRules} ${
+                removedRules === 1 ? "rule was" : "rules were"
+              } removed because ${
+                removedRules === 1 ? "its browser is" : "their browsers are"
+              } no longer installed.`,
+            }
+          : { kind: "success", text: "Browser detection refreshed." },
+      );
       await refreshRunningState({ force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

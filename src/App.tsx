@@ -5,6 +5,7 @@ import {
   getAppAboutInfo,
   getConfigFilePath,
   loadConfig,
+  takeConfigRecoveryNotice,
   openConfigFolder,
   previewRouteWithConfig,
   resetConfig,
@@ -132,7 +133,8 @@ function App() {
     registerBrowserIntegration,
     unregisterBrowserIntegration,
   } = useSystemIntegration({ setStatus });
-  const { runningBrowserIds, refreshRunningState } = useRunningBrowsers({
+  const { runningBrowserIds, missingBrowserIds, refreshRunningState } =
+    useRunningBrowsers({
     activeTab,
     isLoading,
     configRef,
@@ -179,7 +181,12 @@ function App() {
       try {
         const loaded = await loadConfig();
         applyLoadedConfig(loaded);
-        setStatus({ kind: "success", text: "Configuration loaded." });
+        const recoveryNotice = await takeConfigRecoveryNotice();
+        setStatus(
+          recoveryNotice
+            ? { kind: "warning", text: recoveryNotice }
+            : { kind: "success", text: "Configuration loaded." },
+        );
 
         const [loadedConfigPath, nextAboutInfo] = await Promise.all([
           getConfigFilePath(),
@@ -756,6 +763,7 @@ function App() {
             <BrowsersTab
               browsers={config.browsers}
               runningBrowserIds={runningBrowserIds}
+              missingBrowserIds={missingBrowserIds}
               savingBrowserIds={savingBrowserIds}
               pendingBrowserIds={pendingBrowserIds}
               failedBrowserIds={failedBrowserIds}

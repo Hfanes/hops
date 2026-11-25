@@ -1,10 +1,11 @@
 use crate::browsers::{
-    detect_browsers, is_browser_running, merge_detected_browsers, running_processes,
-    validate_manual_browser_request,
+    browser_executable_exists, detect_browsers, is_browser_running, merge_detected_browsers,
+    running_processes, validate_manual_browser_request,
 };
 use crate::config::{
     config_file_path, load_or_init_config, normalize_config, reset_config_with_detected_browsers,
-    save_config_internal, validate_config,
+    save_config_internal, take_config_recovery_notice as take_config_recovery_notice_internal,
+    validate_config,
 };
 use crate::models::{
     AppConfig, BrowserRegistrationStatus, ManualBrowserValidationRequest,
@@ -30,6 +31,13 @@ use tauri::{AppHandle, State};
 #[tauri::command(async)]
 pub(crate) fn load_config(app: AppHandle) -> Result<AppConfig, String> {
     load_or_init_config(&app, true)
+}
+
+/// Set once after an invalid `config.json` was backed up and replaced; the
+/// settings window shows it and later calls return `None`.
+#[tauri::command(async)]
+pub(crate) fn take_config_recovery_notice(app: AppHandle) -> Option<String> {
+    take_config_recovery_notice_internal(&app)
 }
 
 #[tauri::command(async)]
@@ -109,6 +117,18 @@ pub(crate) fn list_running_browser_ids(app: AppHandle) -> Result<Vec<String>, St
         .browsers
         .iter()
         .filter(|browser| !browser.is_hidden && is_browser_running(browser, &running))
+        .map(|browser| browser.id.clone())
+        .collect())
+}
+
+/// Browsers whose executable is no longer on disk, for the "missing" badge.
+#[tauri::command(async)]
+pub(crate) fn list_missing_browser_ids(app: AppHandle) -> Result<Vec<String>, String> {
+    let config = load_or_init_config(&app, false)?;
+    Ok(config
+        .browsers
+        .iter()
+        .filter(|browser| !browser_executable_exists(browser))
         .map(|browser| browser.id.clone())
         .collect())
 }
