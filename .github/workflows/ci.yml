@@ -6,8 +6,9 @@ name: CI
 # public, so Windows runners cost nothing.
 #
 # Pull requests check the code merged with main, which is what the ruleset
-# requires before merging. Pushes to main (every merge) check main again and
-# keep its Rust cache warm, so new pull requests start from it.
+# requires before merging. Pushes to main (every merge) check main again and,
+# when the merge changed Rust, refresh the Rust cache new pull requests start
+# from.
 on:
   pull_request:
     branches:
@@ -34,23 +35,34 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-          # The PR merge commit and its first parent (the base), to list the
-          # files the PR changes.
+          # Enough history to list what changed: for a PR, the merge commit
+          # and its first parent (the base). For a push, the commit before the
+          # push is fetched in the next step.
           fetch-depth: 2
 
-      # The Rust steps take minutes, so they only run when the PR touches the
-      # backend or this workflow. The job itself always runs, because a
-      # required status check that never reports blocks the merge. Pushes to
-      # main and manual runs always check Rust, which also refreshes the cache.
+      # The Rust steps take minutes, so they only run when the PR or the push
+      # to main touches the backend or this workflow. The job itself always
+      # runs, because a required status check that never reports blocks the
+      # merge. Manual runs always check Rust. If the previous commit cannot be
+      # found (a new branch, a force push), Rust is checked to be safe.
       - name: Detect Rust changes
         id: changes
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
         run: |
           rust=true
+          base=""
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            changed=$(git diff --name-only HEAD^1 HEAD)
+            base="HEAD^1"
+          elif [[ "$EVENT_NAME" == "push" && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]]; then
+            if git fetch --quiet --depth=1 origin "$BEFORE"; then
+              base="$BEFORE"
+            fi
+          fi
+          if [[ -n "$base" ]]; then
+            changed=$(git diff --name-only "$base" HEAD)
             echo "Changed files:"
             echo "$changed"
             if ! grep -qE '^(src-tauri/|\.github/workflows/ci\.yml$)' <<< "$changed"; then
