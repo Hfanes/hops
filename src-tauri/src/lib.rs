@@ -75,11 +75,11 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(url) = extract_url_from_args(&args) {
                 let state = app.state::<PickerState>();
-                if let Err(error) = handle_incoming_url(&app, &state, &url, false) {
+                if let Err(error) = handle_incoming_url(app, &state, &url, false) {
                     eprintln!("Hops could not handle incoming URL '{url}': {error}");
                 }
             } else {
-                show_settings_window(&app);
+                show_settings_window(app);
             }
         }))
         .manage(PickerState::default())
@@ -97,7 +97,7 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
 
-            if let Err(error) = setup_tray(&app.handle()) {
+            if let Err(error) = setup_tray(app.handle()) {
                 eprintln!("{error}");
             }
 
@@ -106,21 +106,19 @@ pub fn run() {
             let startup_url = extract_url_from_args(&initial_args);
 
             if let Some(url) = startup_url {
-                hide_settings_window(&app.handle());
+                hide_settings_window(app.handle());
                 if let Err(error) =
-                    handle_incoming_url(&app.handle(), &state, &url, initial_picker_trigger)
+                    handle_incoming_url(app.handle(), &state, &url, initial_picker_trigger)
                 {
                     eprintln!("Hops could not process startup URL '{url}': {error}");
                 }
             } else {
-                match load_or_init_config(&app.handle(), true) {
-                    Ok(config) if config.onboarding_completed => {
-                        hide_settings_window(&app.handle())
-                    }
-                    Ok(_) => show_settings_window(&app.handle()),
+                match load_or_init_config(app.handle(), true) {
+                    Ok(config) if config.onboarding_completed => hide_settings_window(app.handle()),
+                    Ok(_) => show_settings_window(app.handle()),
                     Err(error) => {
                         eprintln!("Could not load config during startup: {error}");
-                        show_settings_window(&app.handle());
+                        show_settings_window(app.handle());
                     }
                 }
             }

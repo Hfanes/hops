@@ -182,7 +182,7 @@ pub(crate) fn merge_detected_browsers(
         merged.push(browser);
     }
 
-    merged.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    merged.sort_by_key(|browser| browser.name.to_lowercase());
     config.browsers = merged;
 }
 
@@ -217,7 +217,7 @@ fn detect_browsers_windows() -> Vec<BrowserConfig> {
         }
     }
 
-    browsers.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    browsers.sort_by_key(|browser| browser.name.to_lowercase());
     browsers
 }
 

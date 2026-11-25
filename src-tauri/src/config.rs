@@ -794,10 +794,7 @@ mod tests {
         write_config_file(&path, &config).expect("config should write");
 
         let mut cache = CachedConfigState::default();
-        cache
-            .load(&path, false)
-            .expect("first load reads the file")
-            .0;
+        cache.load(&path, false).expect("first load reads the file");
 
         let mut updated = config.clone();
         updated.always_show_picker = true;
@@ -825,10 +822,7 @@ mod tests {
         write_config_file(&path, &config).expect("config should write");
 
         let mut cache = CachedConfigState::default();
-        cache
-            .load(&path, false)
-            .expect("first load reads the file")
-            .0;
+        cache.load(&path, false).expect("first load reads the file");
 
         // A directory where the file should be makes the rename fail.
         let blocked = path.with_file_name("blocked");

@@ -1,0 +1,17 @@
+# Workflows pin every action to a commit SHA with its version in a comment.
+# Dependabot proposes one PR per action, so each update is reviewed on its own,
+# and waits a few days after a release before proposing it.
+#
+# dtolnay/rust-toolchain is used from `master` and has no release tags (only an
+# old `v1`), so Dependabot does not update it.
+# Bump its SHA by hand to the latest `master` commit when needed.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci
