@@ -108,6 +108,8 @@ Re-verification notes (2026-11-25):
 
 - `cargo test --manifest-path src-tauri\Cargo.toml --lib` (a test that the
   table contains no custom scheme and only `HKCU` paths).
+- Manual, packaged build: register, set as default in Windows, click links,
+  open an `.html` file, unregister, uninstall, and inspect `regedit`.
 
 ## Notes and risks
 
