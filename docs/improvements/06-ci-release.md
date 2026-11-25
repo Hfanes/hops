@@ -105,7 +105,7 @@ Agreed on 2026-11-25.
    take about 4 minutes, and a PR that only touches docs, the website or the
    frontend cannot break them. The job always runs and only skips steps,
    because a required check that never reports would block the merge.
-   CI runs onpull requests to `main` and on pushes to `main` (every merge),
+   CI runs on pull requests to `main` and on pushes to `main` (every merge),
    not on every branch. Why: the PR run tests the code merged with `main`,
    which is what the ruleset gates; the `main` run checks the result of the
    merge and, when Rust changed, refreshes the Rust cache, which GitHub only
