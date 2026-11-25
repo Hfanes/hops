@@ -4,6 +4,9 @@
   "description": "Capability for the picker window",
   "windows": ["picker"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "allow-get-picker-state",
+    "allow-hide-picker-window",
+    "allow-open-url"
   ]
 }

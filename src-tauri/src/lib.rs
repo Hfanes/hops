@@ -1,6 +1,8 @@
 use tauri::{Manager, WindowEvent};
 
 mod browsers;
+#[cfg(test)]
+mod capability_tests;
 mod commands;
 mod config;
 mod models;
@@ -148,9 +150,7 @@ pub fn run() {
             commands::validate_regex_patterns,
             commands::refresh_browsers,
             commands::list_running_browser_ids,
-            commands::preview_route,
             commands::preview_route_with_config,
-            commands::route_and_open,
             commands::route_and_open_with_config,
             commands::open_url,
             commands::get_picker_state,
