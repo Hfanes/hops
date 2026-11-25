@@ -28,6 +28,30 @@ dead.
 The trust level also controls which private-mode flag is allowed, so wrong
 recognition can mean a wrong or missing private flag.
 
+### Re-verified after 01 (commit `61e595d`)
+
+Line references above are still correct; 01 did not touch `browsers.rs`.
+Two facts the original review missed:
+
+4. **`UserConfirmed` is asserted by the client.** The backend never shows the
+   confirmation itself. The frontend sends `allowUserConfirmed: true` to
+   `validate_manual_browser`, gets `UserConfirmed` back, and later sends it
+   inside `save_config`; `validate_config` (`config.rs:236`) accepts whatever
+   `manualTrust` the payload carries. Anything that can call `save_config`
+   (the main window, after 01) or write the config file can mark any `.exe` as
+   confirmed, however strict recognition becomes.
+5. **`Verified` is never read for a decision.** Every launch and save
+   recomputes recognition (`browsers.rs:383`), and
+   `normalize_manual_browser_entries` (`browsers.rs:92-119`) overwrites the
+   stored value on load. The only reader is the badge in
+   `BrowsersTab.tsx:56-61`. `Known` vs `RecognizedFamily` likewise only changes
+   the message text; the frontend never reads `recognition`.
+
+The false positives also apply to the whole path, not only the file name:
+with a Windows user called Marcus, every manual `.exe` under
+`C:\Users\Marcus\` is classified as Chromium, skips confirmation, and is
+launched with `--incognito` in private mode.
+
 ## Open questions
 
 1. **What is trust for?** (a) A UX safeguard against picking the wrong file
@@ -45,7 +69,28 @@ recognition can mean a wrong or missing private flag.
 
 ## Decisions
 
-_Filled in during the discussion._
+1. **Trust is a UX safeguard (a), not a security boundary.** `UserConfirmed`
+   is asserted by the client, and the config file sits in `%APPDATA%`, where
+   anything running as the user can write it; such a process can already run
+   whatever it wants, so protecting the file gains nothing. This is how other
+   desktop apps (and other browser pickers) treat user-scoped config too. The
+   goal is to stop Hops from misidentifying executables.
+2. **Strict recognition.** A browser is recognized only by an exact executable
+   name (`executable_aliases`) or a known install path suffix. The display
+   name is only shown, and the substring "haystack" matching is removed.
+   Accepted cost: renamed portable browsers (e.g. `FirefoxPortable.exe`) now
+   need confirmation and get no private flag. Letting the user pick a family
+   when confirming is a possible follow-up, not part of this item.
+3. **No Authenticode/publisher checks**: too heavy for what (1) needs.
+4. **Migration: keep existing entries working.** A manual browser stored as
+   `Verified` that is no longer recognized becomes `UserConfirmed` on load,
+   and loses its private flag, since its family is no longer known. The user
+   picked that executable on purpose; dropping the flag avoids passing
+   `--incognito` to something that may not be a browser.
+5. **Keep both trust values** to keep the change small and the config format
+   unchanged. `Verified` stays a derived badge, recomputed on every load.
+   `BrowserRecognition::RecognizedFamily` is removed: without name
+   recognition it meant the same as `Known`.
 
 ## Proposal
 
@@ -68,12 +113,11 @@ Depends on question 1. Likely direction (b):
 
 ## Acceptance criteria
 
-- [ ] A random `.exe` named after a known browser still requires confirmation
-      (if direction (b)).
-- [ ] Paths containing `arc`, `zen`, `chrome` as substrings of unrelated words
+- [x] A random `.exe` named after a known browser still requires confirmation.
+- [x] Paths containing `arc`, `zen`, `chrome` as substrings of unrelated words
       are not recognized as browsers.
-- [ ] No unreachable branch or unused parameter remains in the trust code.
-- [ ] Existing configs load and behave as decided in question 4.
+- [x] No unreachable branch or unused parameter remains in the trust code.
+- [x] Existing configs load and behave as decided in question 4.
 
 ## Verification
 

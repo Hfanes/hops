@@ -6,11 +6,11 @@ Do after 02, 04 and 05, which change the same files. Read their decisions first;
 
 ### Duplication in `browsers.rs`
 
-- `classify_browser_path` (`browsers.rs:581-631`): four almost identical
-  blocks for the Firefox, Edge, Opera and Chromium families. They differ only
-  in the token list and the family.
-- `resolve_browser_metadata` (`browsers.rs:489-524`): builds the same
-  `ResolvedBrowserMetadata` from a definition three times.
+- ~~`classify_browser_path`: four almost identical family-token blocks.~~
+  Done in item 02, which removed the token matching entirely.
+- `resolve_browser_metadata` (`browsers.rs:483-530` after item 02): builds the
+  same `ResolvedBrowserMetadata` from a definition twice (it was three times
+  before item 02).
 - `validate_browser_for_launch` (`browsers.rs:356-404`) and
   `validate_manual_browser_request` (`browsers.rs:406-478`) repeat the same
   four checks: empty path, `.exe` suffix, not Hops, file exists.
@@ -76,7 +76,8 @@ _Filled in during the discussion._
 
 ## Proposal
 
-- Family token table + one loop; a `metadata_from(definition)` helper.
+- A `metadata_from(definition)` helper (the family token table is gone since
+  item 02).
 - `validate_executable_path(path) -> Result<&str, String>` shared by both
   validators.
 - Collapse the picker twins; delete the `CtrlShiftClick` branch.
