@@ -11,7 +11,6 @@ export function SidebarNav({
   activeTab,
   isCollapsed,
   theme,
-  className,
   onTabChange,
   onThemeToggle,
   onCollapseToggle,
@@ -19,13 +18,12 @@ export function SidebarNav({
   activeTab: TabId;
   isCollapsed: boolean;
   theme: ThemePreference;
-  className: string;
   onTabChange: (tab: TabId) => void;
   onThemeToggle: () => void;
   onCollapseToggle: () => void;
 }) {
   return (
-    <aside className={className} aria-label="Primary">
+    <aside className="app-sidebar" aria-label="Primary">
       <div className="sidebar-brand">
         <span className="sidebar-brand-mark">
           <img

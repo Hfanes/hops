@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import {
   getBrowserRegistrationStatus,
   getStartWithWindowsEnabled,
@@ -43,7 +44,7 @@ export function useSystemIntegration({
       const enabled = await getStartWithWindowsEnabled();
       setStartWithWindowsEnabled(enabled);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStartWithWindowsEnabled(null);
       setStatus({
         kind: "warning",
@@ -67,7 +68,7 @@ export function useSystemIntegration({
           : "Hops will not start when you sign in.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStartWithWindowsEnabled(previous);
       setStatus({
         kind: "error",
@@ -87,7 +88,7 @@ export function useSystemIntegration({
       });
       await refreshRegistrationStatus();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not open Windows settings: ${message}`,
@@ -105,7 +106,7 @@ export function useSystemIntegration({
         text: "Hops was registered in Windows Default Apps. Now pick Hops for HTTP and HTTPS in Windows settings.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({ kind: "error", text: `Could not register Hops: ${message}` });
     } finally {
       setIsRegistering(false);
@@ -122,7 +123,7 @@ export function useSystemIntegration({
         text: "Hops registration keys were removed from your user profile.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not unregister Hops: ${message}`,
@@ -146,3 +147,5 @@ export function useSystemIntegration({
     unregisterBrowserIntegration,
   };
 }
+
+export type SystemIntegration = ReturnType<typeof useSystemIntegration>;

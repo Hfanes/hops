@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "../lib/errors";
 import { saveConfig } from "../services/tauri";
 import {
   applySettingsDraft,
@@ -112,7 +113,7 @@ export function useConfigStore({
         }
       } catch (error) {
         options?.onError?.();
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         setStatus({
           kind: "error",
           text: `${options?.errorPrefix ?? "Save failed"}: ${message}`,

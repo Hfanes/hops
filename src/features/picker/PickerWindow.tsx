@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiLock, FiX } from "react-icons/fi";
 import { getPickerState, hidePickerWindow, openUrl } from "../../services/picker";
@@ -60,7 +61,7 @@ function PickerWindow() {
           return;
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         setStatusText(message);
       }
     };
@@ -75,7 +76,7 @@ function PickerWindow() {
       .then(registerUnlistener)
       .catch((error) => {
         if (!disposed) {
-          setStatusText(error instanceof Error ? error.message : String(error));
+          setStatusText(errorMessage(error));
         }
       });
 
@@ -88,7 +89,7 @@ function PickerWindow() {
       .then(registerUnlistener)
       .catch((error) => {
         if (!disposed) {
-          setStatusText(error instanceof Error ? error.message : String(error));
+          setStatusText(errorMessage(error));
         }
       });
 
@@ -144,7 +145,7 @@ function PickerWindow() {
       });
       await hidePickerWindow();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatusText(message);
     } finally {
       setIsOpening(false);

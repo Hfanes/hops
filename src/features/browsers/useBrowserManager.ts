@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import type { DeleteConfirmation } from "../../components/common/DeleteConfirmModal";
 import type { FeedbackMessage } from "../../components/common/FeedbackModal";
 import type { ConfigStore } from "../../hooks/useConfigStore";
-import { cloneSet, createBrowserId } from "../../lib/appTypes";
+import { useIdSet } from "../../hooks/useIdSet";
+import { createBrowserId } from "../../lib/appTypes";
 import { refreshBrowsers, validateManualBrowser } from "../../services/tauri";
 import type {
   AppConfig,
@@ -51,15 +53,9 @@ export function useBrowserManager({
   } = store;
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [savingBrowserIds, setSavingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [failedBrowserIds, setFailedBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const pendingBrowsers = useIdSet();
+  const savingBrowsers = useIdSet();
+  const failedBrowsers = useIdSet();
   const [browserDraft, setBrowserDraft] =
     useState<BrowserDraft>(EMPTY_BROWSER_DRAFT);
   const [manualBrowserConfirmation, setManualBrowserConfirmation] =
@@ -105,18 +101,6 @@ export function useBrowserManager({
     );
   }
 
-  function showBrowserValidationAlert(message: string) {
-    setStatus({
-      kind: "error",
-      text: message,
-    });
-    showFeedbackModal({
-      title: "Invalid browser configuration",
-      message,
-      kind: "error",
-    });
-  }
-
   function revertBrowserToPersisted(browserId: string) {
     const persistedConfig = persistedConfigRef.current;
     const currentConfig = configRef.current;
@@ -153,11 +137,32 @@ export function useBrowserManager({
     };
   }
 
-  async function validateManualBrowserConfig(
+  /**
+   * Shows why a browser failed validation and, for an inline edit, puts the
+   * browser back to its saved state.
+   */
+  function reportValidationFailure(message: string, revertBrowserId?: string) {
+    if (revertBrowserId) {
+      revertBrowserToPersisted(revertBrowserId);
+    }
+    setStatus({ kind: "error", text: message });
+    showFeedbackModal({
+      title: "Invalid browser configuration",
+      message,
+      kind: "error",
+    });
+  }
+
+  /**
+   * Validates a detected or manual browser before it is saved. Returns null
+   * after reporting the failure. With `allowConfirmationFlow`, a manual
+   * browser that needs the user's confirmation is returned unchanged with its
+   * validation, so the caller can ask.
+   */
+  async function validateBrowserConfig(
     browser: BrowserConfig,
     allowUserConfirmed = false,
     options?: {
-      showAlert?: boolean;
       revertBrowserId?: string;
       allowConfirmationFlow?: boolean;
     },
@@ -167,18 +172,10 @@ export function useBrowserManager({
   } | null> {
     const conflict = findBrowserPathConflict(browser);
     if (conflict) {
-      const message = `A browser with this executable path already exists: "${conflict.name}".`;
-      if (options?.revertBrowserId) {
-        revertBrowserToPersisted(options.revertBrowserId);
-      }
-      if (options?.showAlert) {
-        showBrowserValidationAlert(message);
-      } else {
-        setStatus({
-          kind: "error",
-          text: message,
-        });
-      }
+      reportValidationFailure(
+        `A browser with this executable path already exists: "${conflict.name}".`,
+        options?.revertBrowserId,
+      );
       return null;
     }
 
@@ -191,35 +188,13 @@ export function useBrowserManager({
         allowUserConfirmed,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (options?.revertBrowserId) {
-        revertBrowserToPersisted(options.revertBrowserId);
-      }
-      if (options?.showAlert) {
-        showBrowserValidationAlert(message);
-      } else {
-        setStatus({
-          kind: "error",
-          text: message,
-        });
-      }
+      reportValidationFailure(errorMessage(error), options?.revertBrowserId);
       return null;
     }
 
     if (validation.requiresConfirmation) {
       if (!options?.allowConfirmationFlow) {
-        const message = validation.message;
-        if (options?.revertBrowserId) {
-          revertBrowserToPersisted(options.revertBrowserId);
-        }
-        if (options?.showAlert) {
-          showBrowserValidationAlert(message);
-        } else {
-          setStatus({
-            kind: "error",
-            text: message,
-          });
-        }
+        reportValidationFailure(validation.message, options?.revertBrowserId);
         return null;
       }
 
@@ -244,8 +219,7 @@ export function useBrowserManager({
         (item) => item.id === browserId,
       );
       if (browser) {
-        const prepared = await validateManualBrowserConfig(browser, false, {
-          showAlert: true,
+        const prepared = await validateBrowserConfig(browser, false, {
           revertBrowserId: browserId,
           allowConfirmationFlow: browser.source === "manual",
         });
@@ -282,29 +256,14 @@ export function useBrowserManager({
       await persistConfig(configToSave, {
         errorPrefix: "Could not save browser changes",
         onSuccess: () => {
-          setFailedBrowserIds((current) => {
-            if (!current.has(browserId)) {
-              return current;
-            }
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
+          failedBrowsers.remove(browserId);
         },
         onError: () => {
-          setFailedBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.add(browserId);
-            return next;
-          });
+          failedBrowsers.add(browserId);
         },
       });
     } finally {
-      setSavingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.delete(browserId);
-        return next;
-      });
+      savingBrowsers.remove(browserId);
     }
   }
 
@@ -314,32 +273,13 @@ export function useBrowserManager({
       window.clearTimeout(existingTimer);
     }
 
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
+    pendingBrowsers.add(browserId);
+    failedBrowsers.remove(browserId);
 
     browserSaveTimersRef.current[browserId] = window.setTimeout(() => {
       delete browserSaveTimersRef.current[browserId];
-      setPendingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.delete(browserId);
-        return next;
-      });
-      setSavingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.add(browserId);
-        return next;
-      });
+      pendingBrowsers.remove(browserId);
+      savingBrowsers.add(browserId);
 
       startBrowserSave(browserId, nextConfig);
     }, 500);
@@ -377,16 +317,8 @@ export function useBrowserManager({
 
     window.clearTimeout(existingTimer);
     delete browserSaveTimersRef.current[browserId];
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
+    pendingBrowsers.remove(browserId);
+    savingBrowsers.add(browserId);
 
     startBrowserSave(browserId, latestConfig);
   }
@@ -419,7 +351,7 @@ export function useBrowserManager({
       );
       await refreshRunningState({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({ kind: "error", text: `Refresh failed: ${message}` });
     } finally {
       setIsRefreshing(false);
@@ -502,30 +434,9 @@ export function useBrowserManager({
       return;
     }
 
-    setPendingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
+    pendingBrowsers.remove(browserId);
+    savingBrowsers.remove(browserId);
+    failedBrowsers.remove(browserId);
 
     void persistConfig(nextConfig, {
       successText: `Deleted manual browser "${browser.name}".`,
@@ -575,8 +486,7 @@ export function useBrowserManager({
       source: "manual",
       isHidden: false,
     };
-    const prepared = await validateManualBrowserConfig(browser, false, {
-      showAlert: true,
+    const prepared = await validateBrowserConfig(browser, false, {
       allowConfirmationFlow: true,
     });
     if (!prepared) {
@@ -597,7 +507,7 @@ export function useBrowserManager({
       return;
     }
 
-    setBrowserDraft({ name: "", path: "", privateFlag: "" });
+    setBrowserDraft(EMPTY_BROWSER_DRAFT);
     setFormModal(null);
     const nextConfig: AppConfig = {
       ...currentConfig,
@@ -620,17 +530,14 @@ export function useBrowserManager({
     setManualBrowserConfirmation(null);
     if (confirmation.mode === "add") {
       setFormModal(null);
-      setBrowserDraft({ name: "", path: "", privateFlag: "" });
+      setBrowserDraft(EMPTY_BROWSER_DRAFT);
     }
 
     try {
       if (confirmation.mode === "add") {
-        const prepared = await validateManualBrowserConfig(
+        const prepared = await validateBrowserConfig(
           confirmation.browser,
           true,
-          {
-            showAlert: true,
-          },
         );
         if (!prepared) {
           return;
@@ -664,8 +571,7 @@ export function useBrowserManager({
         return;
       }
 
-      const prepared = await validateManualBrowserConfig(currentBrowser, true, {
-        showAlert: true,
+      const prepared = await validateBrowserConfig(currentBrowser, true, {
         revertBrowserId: browserId,
       });
       if (!prepared) {
@@ -700,17 +606,17 @@ export function useBrowserManager({
 
   /** Clears per-browser save indicators and the add form, e.g. after a reset. */
   function resetBrowserEditState() {
-    setPendingBrowserIds(new Set());
-    setSavingBrowserIds(new Set());
-    setFailedBrowserIds(new Set());
+    pendingBrowsers.clear();
+    savingBrowsers.clear();
+    failedBrowsers.clear();
     setBrowserDraft(EMPTY_BROWSER_DRAFT);
   }
 
   return {
     isRefreshing,
-    pendingBrowserIds,
-    savingBrowserIds,
-    failedBrowserIds,
+    pendingBrowserIds: pendingBrowsers.ids,
+    savingBrowserIds: savingBrowsers.ids,
+    failedBrowserIds: failedBrowsers.ids,
     browserDraft,
     setBrowserDraft,
     manualBrowserConfirmation,
@@ -728,3 +634,5 @@ export function useBrowserManager({
     resetBrowserEditState,
   };
 }
+
+export type BrowserManager = ReturnType<typeof useBrowserManager>;
