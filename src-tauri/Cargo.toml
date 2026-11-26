@@ -34,6 +34,7 @@ url = "=2.5.8"
 tauri-plugin-updater = "=2.10.1"
 tauri-plugin-process = "=2.3.1"
 tauri-plugin-notification = "=2.3.3"
+tokio = { version = "=1.52.1", features = ["time"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "=0.52.0"

@@ -17,8 +17,8 @@ use crate::{
     PICKER_WINDOW_LABEL,
 };
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
+use tauri::async_runtime::JoinHandle;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
     WebviewUrl, WebviewWindowBuilder,
@@ -36,7 +36,27 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 #[derive(Default)]
 pub(crate) struct PickerState {
     pub(crate) session: Mutex<Option<PickerSession>>,
-    pub(crate) idle_destroy_token: Mutex<u64>,
+    idle_destroy: Mutex<IdleDestroy>,
+}
+
+/// The pending destroy of a hidden picker, if any.
+#[derive(Default)]
+struct IdleDestroy {
+    /// Bumped on every schedule and cancel. The destroy only runs if the
+    /// token is still the one it was scheduled with.
+    token: u64,
+    task: Option<JoinHandle<()>>,
+}
+
+impl IdleDestroy {
+    /// Stops the pending destroy and returns the token for the next one.
+    fn cancel(&mut self) -> u64 {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        self.token += 1;
+        self.token
+    }
 }
 
 fn clean_cli_value(value: &str) -> String {
@@ -227,34 +247,40 @@ fn picker_debug_log(message: &str) {
     let _ = message;
 }
 
-fn next_picker_idle_destroy_token(state: &PickerState) -> Result<u64, String> {
-    let mut token = state
-        .idle_destroy_token
+fn lock_idle_destroy(
+    state: &PickerState,
+) -> Result<std::sync::MutexGuard<'_, IdleDestroy>, String> {
+    state
+        .idle_destroy
         .lock()
-        .map_err(|_| "Picker idle destroy lock was poisoned.".to_string())?;
-    *token += 1;
-    Ok(*token)
+        .map_err(|_| "Picker idle destroy lock was poisoned.".to_string())
 }
 
 fn cancel_picker_idle_destroy(state: &PickerState) -> Result<(), String> {
-    let _ = next_picker_idle_destroy_token(state)?;
+    lock_idle_destroy(state)?.cancel();
     picker_debug_log("destroy canceled");
     Ok(())
 }
 
+/// Destroys the hidden picker after a while, to free its webview. Only one
+/// destroy is ever pending: scheduling another one aborts the previous task.
+/// The wait is a Tokio timer on Tauri's runtime, so no thread sleeps.
 fn schedule_picker_idle_destroy(app: &AppHandle, state: &PickerState) -> Result<(), String> {
-    let token = next_picker_idle_destroy_token(state)?;
+    let mut idle_destroy = lock_idle_destroy(state)?;
+    let token = idle_destroy.cancel();
     picker_debug_log("destroy scheduled");
 
     let app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(PICKER_IDLE_DESTROY_SECONDS));
+    idle_destroy.task = Some(tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(PICKER_IDLE_DESTROY_SECONDS)).await;
 
         let app_for_main = app.clone();
         if let Err(error) = app.run_on_main_thread(move || {
             let state = app_for_main.state::<PickerState>();
-            let current_token = match state.idle_destroy_token.lock() {
-                Ok(current) => *current,
+            // Aborting cannot stop a destroy already queued here, so the
+            // token still guards against destroying a picker shown again.
+            let current_token = match state.idle_destroy.lock() {
+                Ok(current) => current.token,
                 Err(_) => {
                     eprintln!("Hops picker: idle destroy lock was poisoned.");
                     return;
@@ -276,7 +302,7 @@ fn schedule_picker_idle_destroy(app: &AppHandle, state: &PickerState) -> Result<
         }) {
             eprintln!("Hops picker: could not schedule idle destroy on main thread: {error}");
         }
-    });
+    }));
 
     Ok(())
 }
@@ -695,6 +721,27 @@ mod tests {
             &|_| true,
         )
         .expect("picker session should build")
+    }
+
+    #[test]
+    fn cancelling_an_idle_destroy_aborts_its_task_and_bumps_the_token() {
+        let (sender, receiver) = std::sync::mpsc::channel::<()>();
+        let mut idle_destroy = IdleDestroy {
+            token: 0,
+            task: Some(tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                let _ = sender.send(());
+            })),
+        };
+
+        assert_eq!(idle_destroy.cancel(), 1);
+        assert!(idle_destroy.task.is_none());
+        // An aborted task is dropped with its sender, without sending.
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        );
+        assert_eq!(idle_destroy.cancel(), 2);
     }
 
     fn monitor(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> MonitorBounds {
