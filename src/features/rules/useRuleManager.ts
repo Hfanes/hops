@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import type { DeleteConfirmation } from "../../components/common/DeleteConfirmModal";
 import type { ConfigStore } from "../../hooks/useConfigStore";
 import { cloneSet, createRuleId } from "../../lib/appTypes";
@@ -238,7 +239,7 @@ export function useRuleManager({
           return;
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         setStatus({ kind: "error", text: `Could not validate regex: ${message}` });
         return;
       }

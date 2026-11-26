@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
@@ -198,7 +199,7 @@ function App() {
         setConfigPath(loadedConfigPath);
         setAboutInfo(nextAboutInfo);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         setStatus({ kind: "error", text: `Failed to load config: ${message}` });
       } finally {
         setIsLoading(false);
@@ -329,7 +330,7 @@ function App() {
         text: "Opened config folder.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not open config folder: ${message}`,
@@ -365,7 +366,7 @@ function App() {
           : "Onboarding completed. Review your settings before closing this window.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not finish onboarding: ${message}`,
@@ -412,7 +413,7 @@ function App() {
       });
       await refreshRunningState({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not reset configuration: ${message}`,
@@ -450,7 +451,7 @@ function App() {
       });
       await refreshRunningState({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not restart onboarding: ${message}`,
@@ -507,7 +508,7 @@ function App() {
       }
       await refreshRunningState({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({ kind: "error", text: `Routing failed: ${message}` });
       if (
         openImmediately &&

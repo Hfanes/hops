@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import {
   checkForAppUpdate,
   getAppAboutInfo,
@@ -55,7 +56,7 @@ export function useAppUpdates({
         });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not check for updates: ${message}`,
@@ -99,7 +100,7 @@ export function useAppUpdates({
         await refreshAbout(false, true);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({
         kind: "error",
         text: `Could not install update: ${message}`,

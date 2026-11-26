@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "../../lib/errors";
 import type { DeleteConfirmation } from "../../components/common/DeleteConfirmModal";
 import type { FeedbackMessage } from "../../components/common/FeedbackModal";
 import type { ConfigStore } from "../../hooks/useConfigStore";
@@ -191,7 +192,7 @@ export function useBrowserManager({
         allowUserConfirmed,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       if (options?.revertBrowserId) {
         revertBrowserToPersisted(options.revertBrowserId);
       }
@@ -419,7 +420,7 @@ export function useBrowserManager({
       );
       await refreshRunningState({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus({ kind: "error", text: `Refresh failed: ${message}` });
     } finally {
       setIsRefreshing(false);
