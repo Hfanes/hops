@@ -9,8 +9,6 @@ import {
   openConfigFolder,
   resetConfig,
   saveConfig,
-  setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
-  showSettingsWindow,
 } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
 import {
@@ -34,6 +32,7 @@ import { ManualBrowserConfirmModal } from "./features/browsers/ManualBrowserConf
 import { useBrowserManager } from "./features/browsers/useBrowserManager";
 import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
+import { useOnboarding } from "./features/onboarding/useOnboarding";
 import { RouterTester } from "./features/router/RouterTester";
 import { useRouteTester } from "./features/router/useRouteTester";
 import { AddRuleModal } from "./features/rules/AddRuleModal";
@@ -50,7 +49,6 @@ import { useConfigStore } from "./hooks/useConfigStore";
 import { useDocumentTheme } from "./hooks/useDocumentTheme";
 import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
 import type {
-  AppConfig,
   FormModal,
   SettingsActionPanel,
   StatusState,
@@ -66,12 +64,6 @@ function App() {
   const [isResettingConfig, setIsResettingConfig] = useState(false);
   const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const [onboardingStep, setOnboardingStep] = useState(0);
-  const [onboardingStartWithWindows, setOnboardingStartWithWindows] =
-    useState(true);
-  const [isFinishingOnboarding, setIsFinishingOnboarding] = useState(false);
-  const [isCheckingOnboardingDefaults, setIsCheckingOnboardingDefaults] =
-    useState(false);
   const [settingsActionPanel, setSettingsActionPanel] =
     useState<SettingsActionPanel>("none");
   const [formModal, setFormModal] = useState<FormModal>(null);
@@ -119,6 +111,14 @@ function App() {
     registerBrowserIntegration,
     unregisterBrowserIntegration,
   } = useSystemIntegration({ setStatus });
+  const onboarding = useOnboarding({
+    config,
+    applyLoadedConfig,
+    setStatus,
+    setStartWithWindowsEnabled,
+    refreshRegistrationStatus,
+    onFinished: () => setActiveTab("settings"),
+  });
   const { runningBrowserIds, missingBrowserIds, refreshRunningState } =
     useRunningBrowsers({
     activeTab,
@@ -226,14 +226,6 @@ function App() {
   });
 
   useEffect(() => {
-    if (!config || config.onboardingCompleted) {
-      return;
-    }
-
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [config, onboardingStep]);
-
-  useEffect(() => {
     setFormModal(null);
   }, [activeTab]);
 
@@ -269,62 +261,6 @@ function App() {
         kind: "error",
         text: `Could not open config folder: ${message}`,
       });
-    }
-  }
-
-  async function finishOnboarding() {
-    if (!config) {
-      return;
-    }
-
-    const nextConfig: AppConfig = {
-      ...config,
-      onboardingCompleted: true,
-    };
-
-    setIsFinishingOnboarding(true);
-    try {
-      const enabled = await saveStartWithWindowsEnabled(
-        onboardingStartWithWindows,
-      );
-      setStartWithWindowsEnabled(enabled);
-
-      const saved = await saveConfig(nextConfig);
-      applyLoadedConfig(saved);
-      setActiveTab("settings");
-      await showSettingsWindow();
-      setStatus({
-        kind: "success",
-        text: onboardingStartWithWindows
-          ? "Onboarding completed. Hops will start with Windows. Review your settings before closing this window."
-          : "Onboarding completed. Review your settings before closing this window.",
-      });
-    } catch (error) {
-      const message = errorMessage(error);
-      setStatus({
-        kind: "error",
-        text: `Could not finish onboarding: ${message}`,
-      });
-    } finally {
-      setIsFinishingOnboarding(false);
-    }
-  }
-
-  async function continueToOnboardingFinish() {
-    setIsCheckingOnboardingDefaults(true);
-    try {
-      const next = await refreshRegistrationStatus();
-
-      if (!next) {
-        setStatus({
-          kind: "warning",
-          text: "Could not check Windows HTTP/HTTPS defaults. You can refresh status or finish setup later in Settings.",
-        });
-      }
-
-      setOnboardingStep(3);
-    } finally {
-      setIsCheckingOnboardingDefaults(false);
     }
   }
 
@@ -374,7 +310,7 @@ function App() {
             onboardingCompleted: false,
           });
 
-      setOnboardingStep(0);
+      onboarding.setStep(0);
       setSettingsActionPanel("none");
       applyLoadedConfig(nextConfig);
       setStatus({
@@ -499,24 +435,24 @@ function App() {
                 <h1>Welcome to Hops</h1>
                 <p>Quick onboarding to make external links route correctly.</p>
               </div>
-              <p className="badge">Step {onboardingStep + 1} of 4</p>
+              <p className="badge">Step {onboarding.step + 1} of 4</p>
             </header>
 
             <OnboardingFlow
               statusBanner={statusBanner}
               config={config}
-              onboardingStep={onboardingStep}
+              onboardingStep={onboarding.step}
               browserDraft={browserDraft}
               isRefreshing={isRefreshing}
               isRegistering={isRegistering}
               registrationStatus={registrationStatus}
-              isCheckingOnboardingDefaults={isCheckingOnboardingDefaults}
-              onboardingStartWithWindows={onboardingStartWithWindows}
-              isFinishingOnboarding={isFinishingOnboarding}
+              isCheckingOnboardingDefaults={onboarding.isCheckingDefaults}
+              onboardingStartWithWindows={onboarding.startWithWindows}
+              isFinishingOnboarding={onboarding.isFinishing}
               onRefreshBrowsers={handleRefreshBrowsers}
               onSetBrowserDraft={setBrowserDraft}
               onAddManualBrowser={() => void addManualBrowser()}
-              onSetOnboardingStep={setOnboardingStep}
+              onSetOnboardingStep={onboarding.setStep}
               onRegisterBrowserIntegration={() =>
                 void registerBrowserIntegration()
               }
@@ -524,9 +460,9 @@ function App() {
                 void refreshRegistrationStatus()
               }
               onOpenDefaultAppsSettings={openDefaultAppsSettings}
-              onContinueToFinish={() => void continueToOnboardingFinish()}
-              onSetOnboardingStartWithWindows={setOnboardingStartWithWindows}
-              onFinishOnboarding={() => void finishOnboarding()}
+              onContinueToFinish={() => void onboarding.continueToFinish()}
+              onSetOnboardingStartWithWindows={onboarding.setStartWithWindows}
+              onFinishOnboarding={() => void onboarding.finish()}
             />
           </div>
         </section>
