@@ -63,7 +63,6 @@ export function AddRuleModal({
         />
       </label>
       <PatternTypePicker
-        name="new-rule-pattern-type"
         value={ruleDraft.patternType}
         onChange={(value) =>
           onSetRuleDraft((current) => ({

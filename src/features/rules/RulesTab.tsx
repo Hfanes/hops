@@ -103,7 +103,6 @@ export function RulesTab({
               ) : null}
 
               <PatternTypePicker
-                name={`rule-${rule.id}-pattern-type`}
                 value={rule.patternType}
                 onChange={(value) =>
                   onUpdateRule(rule.id, { patternType: value })

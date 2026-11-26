@@ -18,62 +18,6 @@
 .pattern-type-picker {
   position: relative;
   min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.pattern-type-picker legend {
-  margin-bottom: 6px;
-  color: var(--h-text);
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.pattern-type-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
-  gap: 8px;
-}
-
-.pattern-type-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 8px 10px;
-  border: 1px solid var(--h-border);
-  background: var(--h-card);
-  cursor: pointer;
-}
-
-.pattern-type-option:has(input:checked) {
-  border-color: var(--h-shadow);
-  background: #f4d47c;
-  color: #233038;
-  box-shadow: 4px 4px 0 var(--h-shadow);
-}
-
-.pattern-type-option:has(input:checked) .pattern-info-icon {
-  color: #233038;
-}
-
-.pattern-type-option input[type="radio"] {
-  width: 14px;
-  min-height: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--h-accent);
-  cursor: pointer;
-}
-
-.pattern-type-option span:first-of-type {
-  min-width: 0;
-  flex: 1;
 }
 
 .pattern-info-icon {
