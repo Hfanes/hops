@@ -1,12 +1,6 @@
-export function LoadingState({
-  shellClassName,
-  message,
-}: {
-  shellClassName: string;
-  message: string;
-}) {
+export function LoadingState({ message }: { message: string }) {
   return (
-    <main className={shellClassName}>
+    <main className="app-shell">
       <section className="loading-state">
         <h1>Hops</h1>
         <p>{message}</p>

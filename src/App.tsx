@@ -531,19 +531,9 @@ function App() {
     window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
   }
 
-  const shellClassName = "app-shell";
-  const panelClassName = `app-panel ${
-    isSidebarCollapsed ? "sidebar-collapsed" : ""
-  }`;
-  const onboardingPanelClassName = "onboarding-panel";
-  const sidebarClassName = "app-sidebar";
-  const contentClassName = "content-area";
-  const topbarClassName = "topbar";
-
   const sidebarNav = (
     <SidebarNav
       activeTab={activeTab}
-      className={sidebarClassName}
       isCollapsed={isSidebarCollapsed}
       theme={theme}
       onCollapseToggle={toggleSidebar}
@@ -616,7 +606,6 @@ function App() {
   if (isLoading) {
     return (
       <LoadingState
-        shellClassName={shellClassName}
         message="Loading configuration..."
       />
     );
@@ -625,7 +614,6 @@ function App() {
   if (!config) {
     return (
       <LoadingState
-        shellClassName={shellClassName}
         message="Could not load configuration. Check the status banner and try again."
       />
     );
@@ -633,10 +621,10 @@ function App() {
 
   if (!config.onboardingCompleted) {
     return (
-      <main className={shellClassName}>
-        <section className={onboardingPanelClassName}>
-          <div className={contentClassName} ref={contentAreaRef}>
-            <header className={topbarClassName}>
+      <main className="app-shell">
+        <section className="onboarding-panel">
+          <div className="content-area" ref={contentAreaRef}>
+            <header className="topbar">
               <div>
                 <p className="section-label">Hops Setup</p>
                 <h1>Welcome to Hops</h1>
@@ -679,14 +667,15 @@ function App() {
   }
 
   return (
-    <main className={shellClassName}>
-      <section className={panelClassName}>
+    <main className="app-shell">
+      <section
+        className={`app-panel ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      >
         {sidebarNav}
 
-        <div className={contentClassName} ref={contentAreaRef}>
+        <div className="content-area" ref={contentAreaRef}>
           <Topbar
             activeTab={activeTab}
-            className={topbarClassName}
             actions={
               <>
                 {activeTab === "browsers" ? (
