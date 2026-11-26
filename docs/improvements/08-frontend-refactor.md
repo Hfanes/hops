@@ -134,9 +134,12 @@ and stays.
 ## Acceptance criteria
 
 - [ ] `App.tsx` well under 300 lines; no component receives props it only
-      forwards.
-- [ ] No remaining inline `instanceof Error ? ... : String(...)`.
-- [ ] No manual `cloneSet` add/remove boilerplate.
+      forwards. It went from 826 to 297 lines, so under 300 but not well
+      under. Most of what is left is the tab JSX. No component only forwards
+      props: the two screens take rendered content as slots, and `AppModals`
+      uses what it gets to decide which modal to show.
+- [x] No remaining inline `instanceof Error ? ... : String(...)`.
+- [x] No manual `cloneSet` add/remove boilerplate.
 - [ ] `bun run build` passes; every screen behaves as before.
 
 ## Verification
@@ -146,6 +149,22 @@ and stays.
   a manual browser (including the confirmation flow), hide/show browsers,
   rules (add, edit, reorder, invalid regex), router tester, reset config,
   rerun onboarding, about/update check, close the window with pending saves.
+
+## Implementation notes
+
+- `validateManualBrowserConfig` took a `showAlert` option, but all four
+  callers passed `true`, so the branch that only set the status never ran.
+  The option is gone and `reportValidationFailure` always shows the alert.
+- `OnboardingScreen` and `MainScreen` take the sidebar, footer and content as
+  slots instead of data, so they do not add a level of prop forwarding.
+- `useAppBootstrap` has to run before `useAppUpdates` and
+  `useRunningBrowsers`, which need `isLoading`, but it also loads data those
+  hooks own. App passes it `loadStartupDetails`, a function declaration only
+  called from the bootstrap effect. It resolves to a function that applies
+  the about info, so the config path and the about info are still applied
+  only when everything has loaded, as before.
+- The delete confirmation handler moved into `AppModals`, next to the modal
+  that triggers it.
 
 ## Notes and risks
 
