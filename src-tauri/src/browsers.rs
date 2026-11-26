@@ -4,9 +4,12 @@ use crate::models::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -209,21 +212,17 @@ fn detect_browsers_windows() -> Vec<BrowserConfig> {
         }
     }
 
-    for browser in detect_browsers_from_known_paths(&seen_paths) {
-        let key = normalize_path(&browser.path);
-        if seen_paths.insert(key) {
-            browsers.push(browser);
-        }
-    }
+    browsers.extend(detect_browsers_from_known_paths(&mut seen_paths));
 
     browsers.sort_by_key(|browser| browser.name.to_lowercase());
     browsers
 }
 
+/// Browsers found at their default install paths, skipping any path already
+/// in `seen_paths`. Each path found is added to it.
 #[cfg(target_os = "windows")]
-fn detect_browsers_from_known_paths(seen_paths: &HashSet<String>) -> Vec<BrowserConfig> {
+fn detect_browsers_from_known_paths(seen_paths: &mut HashSet<String>) -> Vec<BrowserConfig> {
     let mut browsers = Vec::new();
-    let mut local_seen = seen_paths.clone();
 
     for definition in known_browser_definitions() {
         for candidate in known_install_paths(definition) {
@@ -232,12 +231,10 @@ fn detect_browsers_from_known_paths(seen_paths: &HashSet<String>) -> Vec<Browser
             }
 
             let path_string = candidate.to_string_lossy().to_string();
-            let normalized = normalize_path(&path_string);
-            if local_seen.contains(&normalized) {
+            if !seen_paths.insert(normalize_path(&path_string)) {
                 continue;
             }
 
-            local_seen.insert(normalized.clone());
             browsers.push(build_detected_browser(
                 &path_string,
                 Some(definition.display_name),
@@ -524,17 +521,18 @@ pub(crate) fn resolve_browser_metadata(
     let exe_name = exe_name.to_lowercase();
     let normalized_path = normalize_path(path);
 
-    let definitions = known_browser_definitions();
     let by_install_path = || {
-        definitions.iter().find(|definition| {
-            definition
-                .known_install_path_suffixes
-                .iter()
-                .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
-        })
+        normalized_install_path_suffixes()
+            .iter()
+            .find(|(_, suffixes)| {
+                suffixes
+                    .iter()
+                    .any(|suffix| normalized_path.ends_with(suffix.as_str()))
+            })
+            .map(|(definition, _)| *definition)
     };
     let by_executable_name = || {
-        definitions
+        known_browser_definitions()
             .iter()
             .find(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
     };
@@ -771,6 +769,28 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
     DEFINITIONS
 }
 
+/// Every definition with its install path suffixes in [`normalize_path`]
+/// form, in definition order. Built once, since metadata is resolved for
+/// each browser on every uncached config load.
+fn normalized_install_path_suffixes() -> &'static [(&'static KnownBrowserDefinition, Vec<String>)] {
+    static SUFFIXES: LazyLock<Vec<(&'static KnownBrowserDefinition, Vec<String>)>> =
+        LazyLock::new(|| {
+            known_browser_definitions()
+                .iter()
+                .map(|definition| {
+                    let suffixes = definition
+                        .known_install_path_suffixes
+                        .iter()
+                        .map(|suffix| normalize_path(suffix))
+                        .collect();
+                    (definition, suffixes)
+                })
+                .collect()
+        });
+
+    &SUFFIXES
+}
+
 #[cfg(target_os = "windows")]
 fn known_install_paths(definition: &KnownBrowserDefinition) -> Vec<PathBuf> {
     let program_files =
@@ -857,6 +877,8 @@ pub(crate) fn running_processes(browsers: &[BrowserConfig]) -> Result<HashSet<St
             "Could not create process snapshot while checking running browsers.".to_string(),
         );
     }
+    // Closed on drop, whichever way this function returns.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
 
     let mut paths = HashSet::new();
     let mut path_buffer = vec![0u16; 32768];
@@ -865,7 +887,7 @@ pub(crate) fn running_processes(browsers: &[BrowserConfig]) -> Result<HashSet<St
         ..unsafe { std::mem::zeroed() }
     };
 
-    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) != 0 };
+    let mut has_entry = unsafe { Process32FirstW(snapshot.as_raw_handle(), &mut entry) != 0 };
     while has_entry {
         if process_entry_name_matches(&entry.szExeFile, &wanted_names) {
             if let Some(path) = query_process_image_path(entry.th32ProcessID, &mut path_buffer) {
@@ -873,11 +895,7 @@ pub(crate) fn running_processes(browsers: &[BrowserConfig]) -> Result<HashSet<St
             }
         }
 
-        has_entry = unsafe { Process32NextW(snapshot, &mut entry) != 0 };
-    }
-
-    unsafe {
-        CloseHandle(snapshot);
+        has_entry = unsafe { Process32NextW(snapshot.as_raw_handle(), &mut entry) != 0 };
     }
 
     Ok(paths)
@@ -907,14 +925,12 @@ fn query_process_image_path(process_id: u32, buffer: &mut [u16]) -> Option<Strin
     if handle.is_null() {
         return None;
     }
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
 
     let mut length = buffer.len() as u32;
-    let success =
-        unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
-
-    unsafe {
-        CloseHandle(handle);
-    }
+    let success = unsafe {
+        QueryFullProcessImageNameW(handle.as_raw_handle(), 0, buffer.as_mut_ptr(), &mut length) != 0
+    };
 
     if !success || length == 0 {
         return None;
