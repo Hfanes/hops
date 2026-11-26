@@ -171,15 +171,34 @@ helper and some `remove_dir_all` calls, but no `Drop` guard).
 
 ## Acceptance criteria
 
-- [ ] No behavior change; the full test suite passes.
-- [ ] The duplications listed above are gone.
-- [ ] Test helpers live in one module; failing tests no longer leak temp files.
-- [ ] Hiding the picker repeatedly does not create one OS thread per hide.
+- [x] No behavior change; the full test suite passes.
+- [x] The duplications listed above are gone.
+- [x] Test helpers live in one module; failing tests no longer leak temp files.
+- [x] Hiding the picker repeatedly does not create one OS thread per hide.
+
+## Implementation notes
+
+- Test bodies changed in three mechanical ways only: picker tests build a
+  `PickerRequest` instead of passing five arguments; tests that made a temp
+  executable keep its `TempDir` guard (`let (_dir, path) = ...`) instead of
+  deleting the file at the end; and
+  `missing_executable_passes_entry_checks_but_not_launch` drops the guard to
+  delete the executable. No assertion changed.
+- The shared `manual_browser` uses the browser ID as its icon key, as the
+  picker copy did; no routing test reads the icon key.
+- `test_rule` stays in `routing.rs` and `picker.rs`: the two take different
+  arguments, and one shared version would rewrite most routing tests for no
+  gain.
+- The event name test lives in `lib.rs`. For it to run when only the
+  frontend side changes, CI now also runs the Rust checks when
+  `src/features/picker/PickerWindow.tsx` changes.
+- New tests: `cancelling_an_idle_destroy_aborts_its_task_and_bumps_the_token`
+  and `picker_window_listens_for_the_event_the_backend_emits`.
 
 ## Verification
 
 - `cargo test --manifest-path src-tauri\Cargo.toml --lib`
-- `cargo clippy --manifest-path src-tauri\Cargo.toml -- -D warnings`
+- `cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings`
 - Manual, packaged build: click links (rule match, no match, Ctrl+Shift), open
   and close the picker quickly many times, check memory and thread count in
   Task Manager.
