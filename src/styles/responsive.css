@@ -41,10 +41,6 @@
     grid-template-columns: 1fr;
   }
 
-  .pattern-type-options {
-    grid-template-columns: 1fr;
-  }
-
   .pattern-type-popover {
     bottom: calc(100% + 8px);
     width: 100%;

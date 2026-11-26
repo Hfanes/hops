@@ -17,6 +17,9 @@ use tauri_plugin_notification::NotificationExt;
 
 /// Suffix of a legacy `config.json` once it has been copied to the new location.
 const MIGRATED_SUFFIX: &str = "migrated";
+/// Longest rule name kept, in characters. The settings inputs use the same
+/// limit, so only a hand-edited config reaches the cut.
+pub(crate) const MAX_RULE_NAME_CHARS: usize = 60;
 
 /// The `config.json` in use, resolved (and migrated) once per run.
 pub(crate) fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -492,6 +495,25 @@ pub(crate) fn normalize_config(config: &mut AppConfig) {
     config
         .rules
         .retain(|rule| browser_ids.contains(&rule.browser_id));
+
+    for rule in &mut config.rules {
+        rule.name = normalize_rule_name(rule.name.take());
+    }
+}
+
+/// Trims a rule name, drops a blank one and cuts it to
+/// `MAX_RULE_NAME_CHARS`. A name is cosmetic, so an over-long one is cut
+/// instead of failing validation and blocking every save.
+fn normalize_rule_name(name: Option<String>) -> Option<String> {
+    let trimmed = name?.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= MAX_RULE_NAME_CHARS {
+        return Some(trimmed);
+    }
+    let cut: String = trimmed.chars().take(MAX_RULE_NAME_CHARS).collect();
+    Some(cut.trim_end().to_string())
 }
 
 pub(crate) fn validate_config(config: &AppConfig) -> Result<(), String> {
@@ -601,9 +623,9 @@ mod tests {
     use super::*;
     use crate::browsers::build_detected_browser;
     use crate::models::{
-        AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, ThemePreference,
+        AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, RuleConfig, ThemePreference,
     };
-    use crate::test_support::{temp_executable, test_app_config, TempDir};
+    use crate::test_support::{manual_browser, temp_executable, test_app_config, TempDir};
     use std::fs;
     use std::time::{Duration, SystemTime};
 
@@ -999,6 +1021,74 @@ mod tests {
             config.browsers[0].path,
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
         );
+    }
+
+    #[test]
+    fn rules_without_a_name_load_as_unnamed() {
+        let json = r#"{
+            "id": "rule-1",
+            "pattern": "*.notion.so",
+            "patternType": "hostname",
+            "browserId": "chrome",
+            "privateMode": false,
+            "enabled": true
+        }"#;
+
+        let rule: RuleConfig = serde_json::from_str(json).expect("old rule should load");
+
+        assert_eq!(rule.name, None);
+    }
+
+    #[test]
+    fn normalize_rule_name_trims_and_drops_blank_names() {
+        assert_eq!(normalize_rule_name(None), None);
+        assert_eq!(normalize_rule_name(Some("   ".to_string())), None);
+        assert_eq!(
+            normalize_rule_name(Some("  Work docs  ".to_string())),
+            Some("Work docs".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_rule_name_cuts_long_names_by_characters() {
+        let exact = "é".repeat(MAX_RULE_NAME_CHARS);
+        assert_eq!(normalize_rule_name(Some(exact.clone())), Some(exact));
+
+        let long = format!("{}🦀🦀", "é".repeat(MAX_RULE_NAME_CHARS - 1));
+        let cut = normalize_rule_name(Some(long)).expect("name should be kept");
+        assert_eq!(cut.chars().count(), MAX_RULE_NAME_CHARS);
+        assert!(cut.ends_with("é🦀"));
+    }
+
+    #[test]
+    fn normalize_config_normalizes_rule_names() {
+        let mut config = test_app_config(vec![manual_browser("tool", "Tool")]);
+        let browser_id = config.browsers[0].id.clone();
+        config.rules = vec![
+            RuleConfig {
+                id: "named".to_string(),
+                name: Some(format!("  {}  ", "a".repeat(MAX_RULE_NAME_CHARS + 10))),
+                pattern: "example.com".to_string(),
+                pattern_type: RulePatternType::Hostname,
+                browser_id: browser_id.clone(),
+                private_mode: false,
+                enabled: true,
+            },
+            RuleConfig {
+                id: "blank".to_string(),
+                name: Some(" ".to_string()),
+                pattern: "example.org".to_string(),
+                pattern_type: RulePatternType::Hostname,
+                browser_id,
+                private_mode: false,
+                enabled: true,
+            },
+        ];
+
+        normalize_config(&mut config);
+
+        assert_eq!(config.rules[0].name, Some("a".repeat(MAX_RULE_NAME_CHARS)));
+        assert_eq!(config.rules[1].name, None);
     }
 
     /// A target `config.json` path and a legacy one in separate temp folders.

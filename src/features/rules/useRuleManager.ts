@@ -13,6 +13,7 @@ import type {
   RuleDraft,
   StatusState,
 } from "../../types";
+import { ruleLabel } from "./ruleLabel";
 import { useRegexErrors } from "./useRegexErrors";
 
 /**
@@ -41,6 +42,7 @@ export function useRuleManager({
   const dirtyRules = useIdSet();
   const savingRules = useIdSet();
   const [ruleDraft, setRuleDraft] = useState<RuleDraft>({
+    name: "",
     pattern: "",
     patternType: "hostname",
     browserId: "",
@@ -152,7 +154,7 @@ export function useRuleManager({
     onRequestDelete({
       kind: "rule",
       ruleId,
-      ruleLabel: `Rule ${ruleIndex + 1}`,
+      ruleLabel: ruleLabel(rule, ruleIndex),
       pattern: rule.pattern,
     });
   }
@@ -221,6 +223,7 @@ export function useRuleManager({
 
     const rule: RuleConfig = {
       id: createRuleId(),
+      name: ruleDraft.name.trim() || null,
       pattern,
       patternType: ruleDraft.patternType,
       browserId: ruleDraft.browserId,
@@ -239,7 +242,7 @@ export function useRuleManager({
         successText: "Rule added and saved.",
         errorPrefix: "Could not save new rule",
       });
-      setRuleDraft((current) => ({ ...current, pattern: "" }));
+      setRuleDraft((current) => ({ ...current, name: "", pattern: "" }));
       setFormModal(null);
     } catch {
       setCurrentConfig(config);

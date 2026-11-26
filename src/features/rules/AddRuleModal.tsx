@@ -2,9 +2,11 @@ import type { Dispatch, SetStateAction } from "react";
 import { ModalShell } from "../../components/common/ModalShell";
 import { PatternTypePicker } from "../../components/common/PatternTypePicker";
 import type { BrowserConfig, RuleDraft } from "../../types";
+import { defaultRuleLabel, MAX_RULE_NAME_LENGTH } from "./ruleLabel";
 
 export function AddRuleModal({
   ruleDraft,
+  ruleCount,
   visibleBrowsers,
   isSaving,
   onSetRuleDraft,
@@ -12,6 +14,8 @@ export function AddRuleModal({
   onClose,
 }: {
   ruleDraft: RuleDraft;
+  /** Rules that already exist, for the default label of the new one. */
+  ruleCount: number;
   visibleBrowsers: BrowserConfig[];
   isSaving: boolean;
   onSetRuleDraft: Dispatch<SetStateAction<RuleDraft>>;
@@ -30,6 +34,21 @@ export function AddRuleModal({
       onClose={onClose}
     >
       <label>
+        Name (optional)
+        <input
+          value={ruleDraft.name}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            onSetRuleDraft((current) => ({
+              ...current,
+              name: value,
+            }));
+          }}
+          maxLength={MAX_RULE_NAME_LENGTH}
+          placeholder={defaultRuleLabel(ruleCount)}
+        />
+      </label>
+      <label>
         Pattern
         <input
           value={ruleDraft.pattern}
@@ -44,7 +63,6 @@ export function AddRuleModal({
         />
       </label>
       <PatternTypePicker
-        name="new-rule-pattern-type"
         value={ruleDraft.patternType}
         onChange={(value) =>
           onSetRuleDraft((current) => ({

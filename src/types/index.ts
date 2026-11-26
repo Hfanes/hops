@@ -59,6 +59,8 @@ export interface ManualBrowserValidationResult {
 
 export interface RuleConfig {
   id: string;
+  /** Null when unnamed; the UI then shows "Rule N" by position. */
+  name: string | null;
   pattern: string;
   patternType: RulePatternType;
   browserId: string;
@@ -131,6 +133,7 @@ export interface PickerSession {
 export type TabId = "settings" | "browsers" | "rules" | "router" | "about";
 
 export interface RuleDraft {
+  name: string;
   pattern: string;
   patternType: RulePatternType;
   browserId: string;

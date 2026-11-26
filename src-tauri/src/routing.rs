@@ -452,6 +452,7 @@ mod tests {
     fn test_rule(pattern_type: RulePatternType, pattern: &str) -> RuleConfig {
         RuleConfig {
             id: "test".to_string(),
+            name: None,
             pattern: pattern.to_string(),
             pattern_type,
             browser_id: "chrome".to_string(),

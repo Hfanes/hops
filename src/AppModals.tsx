@@ -22,6 +22,7 @@ export function AppModals({
   onCloseFormModal,
   browsers,
   rules,
+  ruleCount,
   visibleBrowsers,
   isSaving,
   deleteConfirmation,
@@ -33,6 +34,7 @@ export function AppModals({
   onCloseFormModal: () => void;
   browsers: BrowserManager;
   rules: RuleManager;
+  ruleCount: number;
   visibleBrowsers: BrowserConfig[];
   isSaving: boolean;
   deleteConfirmation: DeleteConfirmation | null;
@@ -68,6 +70,7 @@ export function AppModals({
       ) : formModal === "rule" ? (
         <AddRuleModal
           ruleDraft={rules.ruleDraft}
+          ruleCount={ruleCount}
           visibleBrowsers={visibleBrowsers}
           isSaving={isSaving}
           onSetRuleDraft={rules.setRuleDraft}

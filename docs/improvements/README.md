@@ -70,6 +70,7 @@ the item's **Decisions** section.
 | 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Implemented |
 | 08 | [Frontend refactor](08-frontend-refactor.md)                         | Implemented |
 | 09 | [Release build on tauri-action v1](09-tauri-action-v1.md)            | Proposed    |
+| 10 | [Rule names](10-rule-names.md)                                       | Implemented |
 
 ## Order
 
@@ -86,3 +87,6 @@ changes. A few items overlap and should respect that order:
 - 09 was added after 06, which pinned `tauri-action` to `v0.6.2`. It changes
   only `release.yml` and can be done at any point, ideally together with the
   next version bump so the release it builds is the test.
+- 10 was added after 08 and builds on its split of the rules code. It is the
+  first item that adds a feature, and it changes the config format in a
+  backward-compatible way.

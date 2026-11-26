@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FiInfo } from "react-icons/fi";
 import type { RulePatternType } from "../../types";
 
@@ -73,75 +73,69 @@ const PATTERN_HELP: Record<
   },
 };
 
+/**
+ * The rule's pattern type, as a native select like the other rule fields.
+ * The info icon next to the label explains the selected type.
+ */
 export function PatternTypePicker({
   value,
   onChange,
-  name,
 }: {
   value: RulePatternType;
   onChange: (value: RulePatternType) => void;
-  name: string;
 }) {
-  const [openPatternType, setOpenPatternType] =
-    useState<RulePatternType | null>(null);
-
-  useEffect(() => {
-    setOpenPatternType(null);
-  }, [value]);
-
-  const openHelp = openPatternType ? PATTERN_HELP[openPatternType] : null;
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const help = PATTERN_HELP[value];
 
   return (
-    <fieldset
+    <div
       className="pattern-type-picker"
-      onPointerLeave={() => setOpenPatternType(null)}
+      onPointerLeave={() => setIsHelpOpen(false)}
     >
-      <legend>Pattern type</legend>
-      <div className="pattern-type-options">
-        {PATTERN_OPTIONS.map((option) => {
-          const help = PATTERN_HELP[option.value];
-
-          return (
-            <label key={option.value} className="pattern-type-option">
-              <input
-                type="radio"
-                name={name}
-                value={option.value}
-                checked={value === option.value}
-                onChange={() => onChange(option.value)}
-              />
-              <span>{option.label}</span>
-              <span
-                className="pattern-info-icon"
-                tabIndex={0}
-                aria-label={`Show help for ${help.title}`}
-                title={`How ${help.title} works`}
-                onPointerEnter={() => setOpenPatternType(option.value)}
-                onFocus={() => setOpenPatternType(option.value)}
-                onBlur={() => setOpenPatternType(null)}
-              >
-                <FiInfo aria-hidden="true" />
-              </span>
-            </label>
-          );
-        })}
-      </div>
-      {openHelp ? (
+      <label>
+        <span className="label-row">
+          Pattern type
+          <span
+            className="pattern-info-icon"
+            tabIndex={0}
+            aria-label={`Show help for ${help.title}`}
+            title={`How ${help.title} works`}
+            onPointerEnter={() => setIsHelpOpen(true)}
+            onFocus={() => setIsHelpOpen(true)}
+            onBlur={() => setIsHelpOpen(false)}
+          >
+            <FiInfo aria-hidden="true" />
+          </span>
+        </span>
+        <select
+          value={value}
+          onChange={(event) =>
+            onChange(event.currentTarget.value as RulePatternType)
+          }
+        >
+          {PATTERN_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {isHelpOpen ? (
         <div
           className="pattern-type-popover"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <p>
-            <strong>{openHelp.title}</strong>
+            <strong>{help.title}</strong>
           </p>
-          <p>{openHelp.description}</p>
-          {openHelp.examples.map((example) => (
+          <p>{help.description}</p>
+          {help.examples.map((example) => (
             <p key={example} className="pattern-example">
               {example}
             </p>
           ))}
         </div>
       ) : null}
-    </fieldset>
+    </div>
   );
 }
