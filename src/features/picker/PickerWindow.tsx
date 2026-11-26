@@ -6,6 +6,7 @@ import type { PickerSession, ThemePreference } from "../../types";
 import { PickerBrowserList } from "./PickerBrowserList";
 import "./picker.css";
 
+// Also defined in src-tauri/src/lib.rs; a Rust test checks that the two match.
 const PICKER_SESSION_EVENT = "picker-session";
 
 function applyPickerTheme(themePreference: ThemePreference) {

@@ -603,20 +603,9 @@ mod tests {
     use crate::models::{
         AppConfig, BrowserConfig, BrowserSource, ManualBrowserTrust, ThemePreference,
     };
+    use crate::test_support::{temp_executable, test_app_config, TempDir};
     use std::fs;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    fn temp_executable_path(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("hops-config-test-{unique}"));
-        fs::create_dir_all(&dir).expect("temp config test dir should create");
-        let path = dir.join(name);
-        fs::write(&path, []).expect("temp executable placeholder should write");
-        path
-    }
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn reset_config_restores_defaults_and_keeps_only_detected_browsers() {
@@ -661,11 +650,8 @@ mod tests {
             )],
             true,
         );
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("hops-reset-config-{unique}.json"));
+        let dir = TempDir::new("reset-config");
+        let path = dir.path().join("config.json");
 
         write_config_file(&path, &config).expect("reset config should write");
         let data = fs::read_to_string(&path).expect("reset config file should be readable");
@@ -675,19 +661,12 @@ mod tests {
         assert_eq!(loaded.rules.len(), 0);
         assert_eq!(loaded.default_browser_id, None);
         assert!(loaded.onboarding_completed);
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
     fn write_config_file_replaces_existing_file_without_leaving_temp_file() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("hops-atomic-write-{unique}"));
-        fs::create_dir_all(&dir).expect("temp dir should create");
-        let path = dir.join("config.json");
+        let dir = TempDir::new("atomic-write");
+        let path = dir.path().join("config.json");
         fs::write(&path, "stale content that is longer than nothing")
             .expect("existing config should write");
 
@@ -700,24 +679,20 @@ mod tests {
         let loaded = serde_json::from_str::<AppConfig>(&data).expect("config should parse");
         assert!(loaded.onboarding_completed);
 
-        let leftovers: Vec<_> = fs::read_dir(&dir)
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
             .expect("temp dir should list")
             .filter_map(Result::ok)
             .map(|entry| entry.file_name())
             .collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from("config.json")]);
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
-    fn temp_config_path(label: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("hops-config-cache-{label}-{unique}"));
-        fs::create_dir_all(&dir).expect("temp dir should create");
-        dir.join("config.json")
+    /// A `config.json` path in a fresh temp directory, which is deleted when
+    /// the returned guard drops.
+    fn temp_config_path(label: &str) -> (TempDir, PathBuf) {
+        let dir = TempDir::new(&format!("config-cache-{label}"));
+        let path = dir.path().join("config.json");
+        (dir, path)
     }
 
     fn set_modified(path: &Path, modified: SystemTime) {
@@ -729,13 +704,9 @@ mod tests {
             .expect("modified time should set");
     }
 
-    fn cleanup(path: &Path) {
-        let _ = fs::remove_dir_all(path.parent().expect("temp path should have parent"));
-    }
-
     #[test]
     fn config_cache_serves_unchanged_file_from_memory() {
-        let path = temp_config_path("hit");
+        let (_dir, path) = temp_config_path("hit");
         let config = reset_config_with_detected_browsers(Vec::new(), true);
         write_config_file(&path, &config).expect("config should write");
 
@@ -757,13 +728,11 @@ mod tests {
             .expect("second load hits the cache")
             .0;
         assert_eq!(cached, loaded);
-
-        cleanup(&path);
     }
 
     #[test]
     fn config_cache_picks_up_hand_edits() {
-        let path = temp_config_path("edit");
+        let (_dir, path) = temp_config_path("edit");
         let config = reset_config_with_detected_browsers(Vec::new(), false);
         write_config_file(&path, &config).expect("config should write");
 
@@ -783,13 +752,11 @@ mod tests {
 
         let reloaded = cache.load(&path, false).expect("changed file reloads").0;
         assert!(reloaded.onboarding_completed);
-
-        cleanup(&path);
     }
 
     #[test]
     fn config_cache_save_updates_memory_and_disk() {
-        let path = temp_config_path("save");
+        let (_dir, path) = temp_config_path("save");
         let config = reset_config_with_detected_browsers(Vec::new(), false);
         write_config_file(&path, &config).expect("config should write");
 
@@ -811,13 +778,11 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&path).expect("config should read"))
                 .expect("config should parse");
         assert!(on_disk.always_show_picker);
-
-        cleanup(&path);
     }
 
     #[test]
     fn config_cache_forgets_entry_when_save_fails() {
-        let path = temp_config_path("fail");
+        let (_dir, path) = temp_config_path("fail");
         let config = reset_config_with_detected_browsers(Vec::new(), false);
         write_config_file(&path, &config).expect("config should write");
 
@@ -829,52 +794,37 @@ mod tests {
         fs::create_dir_all(blocked.join("config.json")).expect("blocking dir should create");
         assert!(cache.save(&blocked.join("config.json"), &config).is_err());
         assert!(cache.entry.is_none());
-
-        cleanup(&path);
     }
 
     #[test]
     fn validate_config_rejects_duplicate_browser_paths() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let path_string = path.to_string_lossy().to_string();
-        let config = AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers: vec![
-                BrowserConfig {
-                    id: "manual-a".to_string(),
-                    name: "Custom A".to_string(),
-                    path: path_string.clone(),
-                    private_flag: None,
-                    icon_key: Some("generic".to_string()),
-                    manual_trust: Some(ManualBrowserTrust::UserConfirmed),
-                    source: BrowserSource::Manual,
-                    is_hidden: false,
-                },
-                BrowserConfig {
-                    id: "manual-b".to_string(),
-                    name: "Custom B".to_string(),
-                    path: path_string.clone(),
-                    private_flag: None,
-                    icon_key: Some("generic".to_string()),
-                    manual_trust: Some(ManualBrowserTrust::UserConfirmed),
-                    source: BrowserSource::Manual,
-                    is_hidden: false,
-                },
-            ],
-            rules: Vec::new(),
-        };
+        let config = test_app_config(vec![
+            BrowserConfig {
+                id: "manual-a".to_string(),
+                name: "Custom A".to_string(),
+                path: path_string.clone(),
+                private_flag: None,
+                icon_key: Some("generic".to_string()),
+                manual_trust: Some(ManualBrowserTrust::UserConfirmed),
+                source: BrowserSource::Manual,
+                is_hidden: false,
+            },
+            BrowserConfig {
+                id: "manual-b".to_string(),
+                name: "Custom B".to_string(),
+                path: path_string.clone(),
+                private_flag: None,
+                icon_key: Some("generic".to_string()),
+                manual_trust: Some(ManualBrowserTrust::UserConfirmed),
+                source: BrowserSource::Manual,
+                is_hidden: false,
+            },
+        ]);
 
         let error = validate_config(&config).expect_err("duplicate browser paths should reject");
         assert!(error.contains("duplicated"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     fn backups_next_to(path: &Path) -> Vec<PathBuf> {
@@ -910,7 +860,7 @@ mod tests {
 
     #[test]
     fn invalid_json_is_backed_up_and_replaced_with_defaults() {
-        let path = temp_config_path("invalid-json");
+        let (_dir, path) = temp_config_path("invalid-json");
         let broken = "{ \"version\": 1, \"rules\": [,] }";
         fs::write(&path, broken).expect("broken config should write");
 
@@ -942,8 +892,6 @@ mod tests {
             .expect("second load succeeds")
             .1
             .is_none());
-
-        cleanup(&path);
     }
 
     #[test]
@@ -954,32 +902,28 @@ mod tests {
             .replace("\"light\"", "\"sepia\"");
 
         for contents in [unknown_theme.as_str(), ""] {
-            let path = temp_config_path("semantic");
+            let (_dir, path) = temp_config_path("semantic");
             fs::write(&path, contents).expect("config should write");
 
             let (_, recovery) =
                 load_or_init_config_from_path(&path, false).expect("config is recovered");
             assert!(recovery.is_some(), "{contents:?} should be recovered");
-
-            cleanup(&path);
         }
     }
 
     #[test]
     fn a_missing_config_file_is_created_without_a_recovery() {
-        let path = temp_config_path("missing");
+        let (_dir, path) = temp_config_path("missing");
 
         let (_, recovery) = load_or_init_config_from_path(&path, false).expect("config is created");
         assert!(recovery.is_none());
         assert!(path.exists());
         assert!(backups_next_to(&path).is_empty());
-
-        cleanup(&path);
     }
 
     #[test]
     fn a_second_backup_never_overwrites_the_first() {
-        let path = temp_config_path("two-backups");
+        let (_dir, path) = temp_config_path("two-backups");
 
         fs::write(&path, "first").expect("config should write");
         let first = back_up_invalid_config(&path).expect("first backup");
@@ -992,13 +936,11 @@ mod tests {
             fs::read_to_string(&second).expect("second backup"),
             "second"
         );
-
-        cleanup(&path);
     }
 
     #[test]
     fn config_cache_update_builds_on_a_save_made_after_the_last_load() {
-        let path = temp_config_path("update");
+        let (_dir, path) = temp_config_path("update");
         let config = reset_config_with_detected_browsers(Vec::new(), false);
         write_config_file(&path, &config).expect("config should write");
 
@@ -1023,13 +965,11 @@ mod tests {
                 .expect("config should parse");
         assert!(on_disk.always_show_picker);
         assert!(on_disk.disable_transparency);
-
-        cleanup(&path);
     }
 
     #[test]
     fn config_cache_update_normalizes_the_changed_config() {
-        let path = temp_config_path("update-normalize");
+        let (_dir, path) = temp_config_path("update-normalize");
         let config = reset_config_with_detected_browsers(Vec::new(), false);
         write_config_file(&path, &config).expect("config should write");
 
@@ -1040,8 +980,6 @@ mod tests {
             })
             .expect("update should succeed");
         assert_eq!(updated.default_browser_id, None);
-
-        cleanup(&path);
     }
 
     #[test]
@@ -1064,15 +1002,20 @@ mod tests {
     }
 
     /// A target `config.json` path and a legacy one in separate temp folders.
-    fn migration_paths(label: &str) -> (PathBuf, PathBuf) {
-        let target = temp_config_path(&format!("{label}-local"));
-        let legacy = temp_config_path(&format!("{label}-roaming"));
-        (target, legacy)
+    /// The new and the legacy `config.json` paths, in separate folders of one
+    /// temp directory.
+    fn migration_paths(label: &str) -> (TempDir, PathBuf, PathBuf) {
+        let dir = TempDir::new(&format!("config-migration-{label}"));
+        let target = dir.path().join("local");
+        let legacy = dir.path().join("roaming");
+        fs::create_dir_all(&target).expect("local dir should create");
+        fs::create_dir_all(&legacy).expect("roaming dir should create");
+        (dir, target.join("config.json"), legacy.join("config.json"))
     }
 
     #[test]
     fn migration_copies_the_legacy_config_and_renames_the_old_file() {
-        let (target, legacy) = migration_paths("migrate");
+        let (_dir, target, legacy) = migration_paths("migrate");
         fs::write(&legacy, "{\"legacy\": true}").expect("legacy config should write");
 
         let migrated = migrate_legacy_config(&target, std::slice::from_ref(&legacy))
@@ -1089,14 +1032,11 @@ mod tests {
             fs::read_to_string(&renamed).expect("old config is kept as .migrated"),
             "{\"legacy\": true}"
         );
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn migration_does_nothing_when_the_new_config_exists() {
-        let (target, legacy) = migration_paths("existing");
+        let (_dir, target, legacy) = migration_paths("existing");
         fs::write(&target, "new").expect("new config should write");
         fs::write(&legacy, "old").expect("legacy config should write");
 
@@ -1106,28 +1046,22 @@ mod tests {
         assert_eq!(migrated, None);
         assert_eq!(fs::read_to_string(&target).expect("new config"), "new");
         assert_eq!(fs::read_to_string(&legacy).expect("legacy config"), "old");
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn migration_does_nothing_without_a_legacy_config() {
-        let (target, legacy) = migration_paths("fresh");
+        let (_dir, target, legacy) = migration_paths("fresh");
 
         let migrated = migrate_legacy_config(&target, std::slice::from_ref(&legacy))
             .expect("nothing to migrate");
 
         assert_eq!(migrated, None);
         assert!(!target.exists());
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn migration_uses_the_first_legacy_config_that_exists() {
-        let (target, legacy) = migration_paths("first");
+        let (_dir, target, legacy) = migration_paths("first");
         let missing = legacy.with_file_name("missing.json");
         fs::write(&legacy, "second").expect("legacy config should write");
 
@@ -1136,14 +1070,11 @@ mod tests {
 
         assert_eq!(migrated, Some(legacy.clone()));
         assert_eq!(fs::read_to_string(&target).expect("new config"), "second");
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn migration_never_overwrites_an_earlier_migrated_file() {
-        let (target, legacy) = migration_paths("again");
+        let (_dir, target, legacy) = migration_paths("again");
         let earlier = legacy.with_file_name("config.json.migrated");
         fs::write(&earlier, "earlier").expect("earlier migrated file should write");
         fs::write(&legacy, "current").expect("legacy config should write");
@@ -1157,14 +1088,11 @@ mod tests {
                 .expect("second migrated file"),
             "current"
         );
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn a_failed_migration_keeps_using_the_legacy_config() {
-        let (target, legacy) = migration_paths("blocked");
+        let (_dir, target, legacy) = migration_paths("blocked");
         fs::write(&legacy, "old").expect("legacy config should write");
         // A file where the new config folder should be makes the copy fail.
         let blocker = target.with_file_name("blocker");
@@ -1180,23 +1108,17 @@ mod tests {
         let notice = notice.expect("the user is told the move failed");
         assert!(notice.contains("Your settings are unchanged"), "{notice}");
         assert!(notice.contains(&legacy.display().to_string()), "{notice}");
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]
     fn a_successful_migration_has_no_notice() {
-        let (target, legacy) = migration_paths("quiet");
+        let (_dir, target, legacy) = migration_paths("quiet");
         fs::write(&legacy, "old").expect("legacy config should write");
 
         let (resolved, notice) = resolve_config_path(target.clone(), std::slice::from_ref(&legacy));
 
         assert_eq!(resolved, target);
         assert_eq!(notice, None);
-
-        cleanup(&target);
-        cleanup(&legacy);
     }
 
     #[test]

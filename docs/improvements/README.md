@@ -67,7 +67,7 @@ the item's **Decisions** section.
 | 04 | [Windows registration](04-windows-registration.md)                   | Implemented |
 | 05 | [Config location and concurrency](05-config-location-concurrency.md) | Implemented |
 | 06 | [CI and release hardening](06-ci-release.md)                         | Implemented |
-| 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Proposed    |
+| 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Implemented |
 | 08 | [Frontend refactor](08-frontend-refactor.md)                         | Proposed    |
 | 09 | [Release build on tauri-action v1](09-tauri-action-v1.md)            | Proposed    |
 

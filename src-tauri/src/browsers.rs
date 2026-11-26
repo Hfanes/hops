@@ -4,23 +4,20 @@ use crate::models::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-};
 #[cfg(target_os = "windows")]
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 #[cfg(target_os = "windows")]
 use winreg::HKEY;
+
+mod process;
+
+pub(crate) use process::{
+    current_running_processes, is_browser_running, running_processes, RunningProcessSnapshot,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserFamily {
@@ -37,7 +34,6 @@ struct KnownBrowserDefinition {
     display_name: &'static str,
     icon_key: &'static str,
     family: BrowserFamily,
-    private_flag_override: Option<&'static str>,
     use_family_private_flag: bool,
     known_install_path_suffixes: &'static [&'static str],
 }
@@ -210,21 +206,17 @@ fn detect_browsers_windows() -> Vec<BrowserConfig> {
         }
     }
 
-    for browser in detect_browsers_from_known_paths(&seen_paths) {
-        let key = normalize_path(&browser.path);
-        if seen_paths.insert(key) {
-            browsers.push(browser);
-        }
-    }
+    browsers.extend(detect_browsers_from_known_paths(&mut seen_paths));
 
     browsers.sort_by_key(|browser| browser.name.to_lowercase());
     browsers
 }
 
+/// Browsers found at their default install paths, skipping any path already
+/// in `seen_paths`. Each path found is added to it.
 #[cfg(target_os = "windows")]
-fn detect_browsers_from_known_paths(seen_paths: &HashSet<String>) -> Vec<BrowserConfig> {
+fn detect_browsers_from_known_paths(seen_paths: &mut HashSet<String>) -> Vec<BrowserConfig> {
     let mut browsers = Vec::new();
-    let mut local_seen = seen_paths.clone();
 
     for definition in known_browser_definitions() {
         for candidate in known_install_paths(definition) {
@@ -233,12 +225,10 @@ fn detect_browsers_from_known_paths(seen_paths: &HashSet<String>) -> Vec<Browser
             }
 
             let path_string = candidate.to_string_lossy().to_string();
-            let normalized = normalize_path(&path_string);
-            if local_seen.contains(&normalized) {
+            if !seen_paths.insert(normalize_path(&path_string)) {
                 continue;
             }
 
-            local_seen.insert(normalized.clone());
             browsers.push(build_detected_browser(
                 &path_string,
                 Some(definition.display_name),
@@ -361,6 +351,34 @@ fn is_hops_executable(path: &str) -> bool {
         .is_ok_and(|current| normalize_path(&current.to_string_lossy()) == normalized)
 }
 
+/// Why a path cannot be a browser executable, judged from the text alone.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+enum ExecutablePathError {
+    Empty,
+    NotExe,
+    Hops,
+}
+
+/// The trimmed path, if it is not empty, ends in `.exe` and is not Hops.
+/// Callers word the first two errors for their own context.
+fn check_executable_path(path: &str) -> Result<&str, ExecutablePathError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(ExecutablePathError::Empty);
+    }
+
+    #[cfg(target_os = "windows")]
+    if !path.to_ascii_lowercase().ends_with(".exe") {
+        return Err(ExecutablePathError::NotExe);
+    }
+
+    if is_hops_executable(path) {
+        return Err(ExecutablePathError::Hops);
+    }
+
+    Ok(path)
+}
+
 /// Whether the browser's executable is on disk. Kept apart from
 /// [`validate_browser_entry`] so an uninstalled browser does not block saving
 /// unrelated settings; it only fails when Hops tries to launch it.
@@ -390,25 +408,16 @@ pub(crate) fn validate_browser_for_launch(
 pub(crate) fn validate_browser_entry(
     browser: &BrowserConfig,
 ) -> Result<ValidatedBrowserLaunch, String> {
-    let path = browser.path.trim();
-    if path.is_empty() {
-        return Err(format!(
-            "Browser '{}' is missing an executable path.",
-            browser.name
-        ));
-    }
-
-    #[cfg(target_os = "windows")]
-    if !path.to_ascii_lowercase().ends_with(".exe") {
-        return Err(format!(
+    let path = check_executable_path(&browser.path).map_err(|error| match error {
+        ExecutablePathError::Empty => {
+            format!("Browser '{}' is missing an executable path.", browser.name)
+        }
+        ExecutablePathError::NotExe => format!(
             "Browser '{}' must point to a .exe executable.",
             browser.name
-        ));
-    }
-
-    if is_hops_executable(path) {
-        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
-    }
+        ),
+        ExecutablePathError::Hops => HOPS_SELF_LAUNCH_ERROR.to_string(),
+    })?;
 
     let recognition = classify_browser_path(path, Some(browser.name.as_str()))?;
     let private_flag =
@@ -433,19 +442,14 @@ pub(crate) fn validate_browser_entry(
 pub(crate) fn validate_manual_browser_request(
     request: &ManualBrowserValidationRequest,
 ) -> Result<ManualBrowserValidationResult, String> {
-    let path = request.path.trim();
-    if path.is_empty() {
-        return Err("Manual browser needs an executable path.".to_string());
-    }
-
-    #[cfg(target_os = "windows")]
-    if !path.to_ascii_lowercase().ends_with(".exe") {
-        return Err("Manual browser executable must be a .exe file.".to_string());
-    }
-
-    if is_hops_executable(path) {
-        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
-    }
+    let path = check_executable_path(&request.path).map_err(|error| {
+        match error {
+            ExecutablePathError::Empty => "Manual browser needs an executable path.",
+            ExecutablePathError::NotExe => "Manual browser executable must be a .exe file.",
+            ExecutablePathError::Hops => HOPS_SELF_LAUNCH_ERROR,
+        }
+        .to_string()
+    })?;
 
     if !Path::new(path).exists() {
         return Err(format!("Browser executable does not exist: {path}"));
@@ -511,30 +515,24 @@ pub(crate) fn resolve_browser_metadata(
     let exe_name = exe_name.to_lowercase();
     let normalized_path = normalize_path(path);
 
-    if let Some(definition) = known_browser_definitions().iter().find(|definition| {
-        definition
-            .known_install_path_suffixes
+    let by_install_path = || {
+        normalized_install_path_suffixes()
             .iter()
-            .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
-    }) {
-        return ResolvedBrowserMetadata {
-            name: definition.display_name.to_string(),
-            family: definition.family,
-            private_flag: resolved_private_flag_for_definition(definition),
-            icon_key: Some(definition.icon_key.to_string()),
-        };
-    }
+            .find(|(_, suffixes)| {
+                suffixes
+                    .iter()
+                    .any(|suffix| normalized_path.ends_with(suffix.as_str()))
+            })
+            .map(|(definition, _)| *definition)
+    };
+    let by_executable_name = || {
+        known_browser_definitions()
+            .iter()
+            .find(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
+    };
 
-    if let Some(definition) = known_browser_definitions()
-        .iter()
-        .find(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
-    {
-        return ResolvedBrowserMetadata {
-            name: definition.display_name.to_string(),
-            family: definition.family,
-            private_flag: resolved_private_flag_for_definition(definition),
-            icon_key: Some(definition.icon_key.to_string()),
-        };
+    if let Some(definition) = by_install_path().or_else(by_executable_name) {
+        return metadata_from_definition(definition);
     }
 
     let family = BrowserFamily::Unknown;
@@ -629,17 +627,19 @@ fn browser_family_key(family: BrowserFamily) -> Option<&'static str> {
     }
 }
 
-fn resolved_private_flag_for_definition(definition: &KnownBrowserDefinition) -> Option<String> {
-    definition
-        .private_flag_override
-        .map(str::to_string)
-        .or_else(|| {
-            if definition.use_family_private_flag {
-                default_private_flag_for_family(definition.family)
-            } else {
-                None
-            }
-        })
+fn metadata_from_definition(definition: &KnownBrowserDefinition) -> ResolvedBrowserMetadata {
+    let private_flag = if definition.use_family_private_flag {
+        default_private_flag_for_family(definition.family)
+    } else {
+        None
+    };
+
+    ResolvedBrowserMetadata {
+        name: definition.display_name.to_string(),
+        family: definition.family,
+        private_flag,
+        icon_key: Some(definition.icon_key.to_string()),
+    }
 }
 
 fn default_private_flag_for_family(family: BrowserFamily) -> Option<String> {
@@ -659,7 +659,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Google Chrome",
             icon_key: "chrome",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Google\\Chrome\\Application\\chrome.exe"],
         },
@@ -668,7 +667,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Tor Browser",
             icon_key: "tor",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: false,
             known_install_path_suffixes: &["Tor Browser\\Browser\\firefox.exe"],
         },
@@ -677,7 +675,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Mozilla Firefox",
             icon_key: "firefox",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Mozilla Firefox\\firefox.exe"],
         },
@@ -686,7 +683,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "LibreWolf",
             icon_key: "librewolf",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["LibreWolf\\librewolf.exe"],
         },
@@ -695,7 +691,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Waterfox",
             icon_key: "generic",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Waterfox\\waterfox.exe"],
         },
@@ -704,7 +699,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Floorp",
             icon_key: "floorp",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Floorp\\floorp.exe"],
         },
@@ -713,7 +707,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Zen",
             icon_key: "zen",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Zen Browser\\zen.exe"],
         },
@@ -722,7 +715,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Microsoft Edge",
             icon_key: "edge",
             family: BrowserFamily::Edge,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Microsoft\\Edge\\Application\\msedge.exe"],
         },
@@ -731,7 +723,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Brave",
             icon_key: "brave",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
         },
@@ -740,7 +731,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Opera",
             icon_key: "opera",
             family: BrowserFamily::Opera,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Programs\\Opera\\opera.exe", "Opera\\launcher.exe"],
         },
@@ -749,7 +739,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Vivaldi",
             icon_key: "vivaldi",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Vivaldi\\Application\\vivaldi.exe"],
         },
@@ -758,7 +747,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Arc",
             icon_key: "arc",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["The Browser Company\\Arc\\Arc.exe"],
         },
@@ -767,13 +755,34 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Helium",
             icon_key: "helium",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["imput\\Helium\\Application\\chrome.exe"],
         },
     ];
 
     DEFINITIONS
+}
+
+/// Every definition with its install path suffixes in [`normalize_path`]
+/// form, in definition order. Built once, since metadata is resolved for
+/// each browser on every uncached config load.
+fn normalized_install_path_suffixes() -> &'static [(&'static KnownBrowserDefinition, Vec<String>)] {
+    static SUFFIXES: LazyLock<Vec<(&'static KnownBrowserDefinition, Vec<String>)>> =
+        LazyLock::new(|| {
+            known_browser_definitions()
+                .iter()
+                .map(|definition| {
+                    let suffixes = definition
+                        .known_install_path_suffixes
+                        .iter()
+                        .map(|suffix| normalize_path(suffix))
+                        .collect();
+                    (definition, suffixes)
+                })
+                .collect()
+        });
+
+    &SUFFIXES
 }
 
 #[cfg(target_os = "windows")]
@@ -829,180 +838,13 @@ fn executable_name_from_path(path: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-/// Lowercased executable file names (e.g. `chrome.exe`) of the given browsers.
-fn browser_executable_names(browsers: &[BrowserConfig]) -> HashSet<String> {
-    browsers
-        .iter()
-        .filter_map(|browser| {
-            normalize_path(&browser.path)
-                .rsplit('\\')
-                .next()
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-        })
-        .collect()
-}
-
-/// Normalized full paths of running processes that could be one of `browsers`.
-///
-/// The process snapshot already carries each executable's file name, so only
-/// processes whose name matches a configured browser are opened to read their
-/// full path. That turns hundreds of `OpenProcess` calls into a handful.
-#[cfg(target_os = "windows")]
-pub(crate) fn running_processes(browsers: &[BrowserConfig]) -> Result<HashSet<String>, String> {
-    let wanted_names = browser_executable_names(browsers);
-    if wanted_names.is_empty() {
-        return Ok(HashSet::new());
-    }
-
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(
-            "Could not create process snapshot while checking running browsers.".to_string(),
-        );
-    }
-
-    let mut paths = HashSet::new();
-    let mut path_buffer = vec![0u16; 32768];
-    let mut entry = PROCESSENTRY32W {
-        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-        ..unsafe { std::mem::zeroed() }
-    };
-
-    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) != 0 };
-    while has_entry {
-        if process_entry_name_matches(&entry.szExeFile, &wanted_names) {
-            if let Some(path) = query_process_image_path(entry.th32ProcessID, &mut path_buffer) {
-                paths.insert(normalize_path(&path));
-            }
-        }
-
-        has_entry = unsafe { Process32NextW(snapshot, &mut entry) != 0 };
-    }
-
-    unsafe {
-        CloseHandle(snapshot);
-    }
-
-    Ok(paths)
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-/// Whether a null-terminated UTF-16 executable name is in `wanted_names`
-/// (which holds lowercased names).
-fn process_entry_name_matches(exe_file: &[u16], wanted_names: &HashSet<String>) -> bool {
-    let length = exe_file
-        .iter()
-        .position(|&unit| unit == 0)
-        .unwrap_or(exe_file.len());
-    String::from_utf16(&exe_file[..length])
-        .is_ok_and(|name| wanted_names.contains(&name.to_lowercase()))
-}
-
-/// Hops only supports Windows; elsewhere no browser is reported as running.
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn running_processes(_browsers: &[BrowserConfig]) -> Result<HashSet<String>, String> {
-    Ok(HashSet::new())
-}
-
-#[cfg(target_os = "windows")]
-fn query_process_image_path(process_id: u32, buffer: &mut [u16]) -> Option<String> {
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
-    if handle.is_null() {
-        return None;
-    }
-
-    let mut length = buffer.len() as u32;
-    let success =
-        unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) != 0 };
-
-    unsafe {
-        CloseHandle(handle);
-    }
-
-    if !success || length == 0 {
-        return None;
-    }
-
-    String::from_utf16(&buffer[..length as usize]).ok()
-}
-
-pub(crate) fn is_browser_running(
-    browser: &BrowserConfig,
-    running_processes: &HashSet<String>,
-) -> bool {
-    let normalized_path = normalize_path(&browser.path);
-    running_processes.contains(&normalized_path)
-}
-
-pub(crate) struct RunningProcessSnapshot<F>
-where
-    F: FnMut() -> HashSet<String>,
-{
-    running: Option<HashSet<String>>,
-    load: F,
-}
-
-/// A lazy snapshot that scans only for the given browsers' executables, and
-/// only the first time a running state is actually needed.
-pub(crate) fn current_running_processes(
-    browsers: &[BrowserConfig],
-) -> RunningProcessSnapshot<impl FnMut() -> HashSet<String> + '_> {
-    RunningProcessSnapshot::new(move || running_processes(browsers).unwrap_or_default())
-}
-
-impl<F> RunningProcessSnapshot<F>
-where
-    F: FnMut() -> HashSet<String>,
-{
-    pub(crate) fn new(load: F) -> Self {
-        Self {
-            running: None,
-            load,
-        }
-    }
-
-    pub(crate) fn is_browser_running(&mut self, browser: &BrowserConfig) -> bool {
-        let running = self.running.get_or_insert_with(|| (self.load)());
-        is_browser_running(browser, running)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppConfig, BrowserConfig, BrowserSource, ThemePreference};
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::models::{BrowserConfig, BrowserSource};
+    use crate::test_support::{browser_at, temp_executable, test_app_config};
     #[cfg(target_os = "windows")]
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
-
-    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
-        AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers,
-            rules: Vec::new(),
-        }
-    }
-
-    fn temp_executable_path(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("hops-browser-test-{unique}"));
-        fs::create_dir_all(&dir).expect("temp browser test dir should create");
-        let path = dir.join(name);
-        fs::write(&path, []).expect("temp executable placeholder should write");
-        path
-    }
 
     #[test]
     fn chromium_family_metadata_gets_incognito_flag() {
@@ -1276,7 +1118,7 @@ mod tests {
 
     #[test]
     fn manual_browser_validation_accepts_known_browser_path_and_expected_flag() {
-        let path = temp_executable_path("chrome.exe");
+        let (_dir, path) = temp_executable("chrome.exe");
         let browser = BrowserConfig {
             id: "manual-chrome".to_string(),
             name: "Portable Chrome".to_string(),
@@ -1291,14 +1133,11 @@ mod tests {
         let validated =
             validate_browser_for_launch(&browser).expect("manual chrome should validate");
         assert_eq!(validated.private_flag.as_deref(), Some("--incognito"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn manual_browser_validation_requires_confirmation_for_unknown_executable() {
-        let path = temp_executable_path("notepad.exe");
+        let (_dir, path) = temp_executable("notepad.exe");
         let browser = BrowserConfig {
             id: "manual-notepad".to_string(),
             name: "Definitely Not A Browser".to_string(),
@@ -1313,14 +1152,11 @@ mod tests {
         let error =
             validate_browser_for_launch(&browser).expect_err("unknown exe should need trust");
         assert!(error.contains("needs explicit confirmation"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn manual_browser_validation_rejects_unexpected_private_flag() {
-        let path = temp_executable_path("firefox.exe");
+        let (_dir, path) = temp_executable("firefox.exe");
         let browser = BrowserConfig {
             id: "manual-firefox".to_string(),
             name: "Firefox".to_string(),
@@ -1335,9 +1171,6 @@ mod tests {
         let error =
             validate_browser_for_launch(&browser).expect_err("unexpected flag should reject");
         assert!(error.contains("only allows the private flag"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1354,7 +1187,7 @@ mod tests {
 
     #[test]
     fn recognized_firefox_family_manual_browser_gets_safe_default_flag() {
-        let path = temp_executable_path("floorp.exe");
+        let (_dir, path) = temp_executable("floorp.exe");
         let request = ManualBrowserValidationRequest {
             name: "Portable Floorp".to_string(),
             path: path.to_string_lossy().to_string(),
@@ -1368,14 +1201,11 @@ mod tests {
         assert_eq!(validated.manual_trust, Some(ManualBrowserTrust::Verified));
         assert_eq!(validated.private_flag.as_deref(), Some("--private-window"));
         assert_eq!(validated.icon_key.as_deref(), Some("floorp"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn unknown_manual_browser_can_be_user_confirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let request = ManualBrowserValidationRequest {
             name: "Custom Browser".to_string(),
             path: path.to_string_lossy().to_string(),
@@ -1403,14 +1233,11 @@ mod tests {
             is_hidden: false,
         };
         assert!(validate_browser_for_launch(&browser).is_ok());
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn normalize_manual_browser_entries_keeps_previously_verified_unknown_as_confirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let mut config = test_app_config(vec![BrowserConfig {
             id: "manual-custom".to_string(),
             name: "Custom Browser".to_string(),
@@ -1430,14 +1257,11 @@ mod tests {
         );
         assert_eq!(browser.private_flag, None);
         assert!(validate_browser_for_launch(browser).is_ok());
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn normalize_manual_browser_entries_leaves_unconfirmed_unknown_unconfirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let mut config = test_app_config(vec![BrowserConfig {
             id: "manual-custom".to_string(),
             name: "Custom Browser".to_string(),
@@ -1451,9 +1275,6 @@ mod tests {
 
         normalize_manual_browser_entries(&mut config);
         assert_eq!(config.browsers[0].manual_trust, None);
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1472,7 +1293,7 @@ mod tests {
             assert_eq!(result.name, name);
         }
 
-        let path = temp_executable_path("payload.exe");
+        let (_dir, path) = temp_executable("payload.exe");
         let browser = BrowserConfig {
             id: "manual-fake-chrome".to_string(),
             name: "Google Chrome".to_string(),
@@ -1486,9 +1307,6 @@ mod tests {
         let error = validate_browser_for_launch(&browser)
             .expect_err("a renamed executable should need confirmation");
         assert!(error.contains("needs explicit confirmation"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1557,59 +1375,6 @@ mod tests {
         }
     }
 
-    fn browser_at(path: &str) -> BrowserConfig {
-        BrowserConfig {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            path: path.to_string(),
-            private_flag: None,
-            icon_key: None,
-            manual_trust: None,
-            source: BrowserSource::Manual,
-            is_hidden: false,
-        }
-    }
-
-    fn utf16_exe_name(name: &str) -> [u16; 260] {
-        let mut buffer = [0u16; 260];
-        for (slot, unit) in buffer.iter_mut().zip(name.encode_utf16()) {
-            *slot = unit;
-        }
-        buffer
-    }
-
-    #[test]
-    fn browser_executable_names_are_lowercased_file_names() {
-        let names = browser_executable_names(&[
-            browser_at("C:\\Program Files\\Google\\Chrome\\Application\\Chrome.EXE"),
-            browser_at("  C:/Tools/Firefox/firefox.exe  "),
-            browser_at(""),
-        ]);
-
-        assert_eq!(
-            names,
-            HashSet::from(["chrome.exe".to_string(), "firefox.exe".to_string()])
-        );
-    }
-
-    #[test]
-    fn process_entry_name_matching_is_case_insensitive_and_stops_at_null() {
-        let wanted = HashSet::from(["chrome.exe".to_string()]);
-
-        assert!(process_entry_name_matches(
-            &utf16_exe_name("CHROME.exe"),
-            &wanted
-        ));
-        assert!(!process_entry_name_matches(
-            &utf16_exe_name("chrome.exe.bak"),
-            &wanted
-        ));
-        assert!(!process_entry_name_matches(
-            &utf16_exe_name("svchost.exe"),
-            &wanted
-        ));
-    }
-
     #[test]
     fn hops_executable_is_recognized_by_name_or_running_path() {
         assert!(is_hops_executable(
@@ -1648,11 +1413,11 @@ mod tests {
 
     #[test]
     fn missing_executable_passes_entry_checks_but_not_launch() {
-        let path = temp_executable_path("chrome.exe");
+        let (dir, path) = temp_executable("chrome.exe");
         let mut browser = browser_at(&path.to_string_lossy());
         browser.private_flag = Some("--incognito".to_string());
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+        // Deleting the directory uninstalls the browser.
+        drop(dir);
 
         assert!(!browser_executable_exists(&browser));
         let entry = validate_browser_entry(&browser).expect("entry checks do not touch the disk");
@@ -1669,43 +1434,6 @@ mod tests {
 
         let error = validate_browser_entry(&browser).expect_err("unconfirmed manual browser");
         assert!(error.contains("needs explicit confirmation"), "{error}");
-    }
-
-    #[test]
-    fn running_processes_skips_scan_without_browsers() {
-        assert!(running_processes(&[])
-            .expect("empty scan should succeed")
-            .is_empty());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn running_processes_finds_a_live_process_by_full_path() {
-        // The test binary itself is a running process we know the path of.
-        let current_exe = std::env::current_exe().expect("current exe should resolve");
-        let current_path = current_exe.to_string_lossy().to_string();
-
-        let running = running_processes(&[browser_at(&current_path)])
-            .expect("process snapshot should succeed");
-
-        assert!(is_browser_running(&browser_at(&current_path), &running));
-        // Only processes sharing the wanted executable name are resolved.
-        let wanted = browser_executable_names(&[browser_at(&current_path)]);
-        assert!(running.iter().all(|path| wanted
-            .iter()
-            .any(|name| path.ends_with(&format!("\\{name}")))));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn a_path_with_surrounding_whitespace_is_still_reported_as_running() {
-        let current_exe = std::env::current_exe().expect("current exe should resolve");
-        let padded_path = format!("  {}\t", current_exe.to_string_lossy());
-
-        let running = running_processes(&[browser_at(&padded_path)])
-            .expect("process snapshot should succeed");
-
-        assert!(is_browser_running(&browser_at(&padded_path), &running));
     }
 
     #[test]

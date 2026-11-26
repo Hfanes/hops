@@ -17,8 +17,8 @@ use crate::{
     PICKER_WINDOW_LABEL,
 };
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
+use tauri::async_runtime::JoinHandle;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
     WebviewUrl, WebviewWindowBuilder,
@@ -36,7 +36,27 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 #[derive(Default)]
 pub(crate) struct PickerState {
     pub(crate) session: Mutex<Option<PickerSession>>,
-    pub(crate) idle_destroy_token: Mutex<u64>,
+    idle_destroy: Mutex<IdleDestroy>,
+}
+
+/// The pending destroy of a hidden picker, if any.
+#[derive(Default)]
+struct IdleDestroy {
+    /// Bumped on every schedule and cancel. The destroy only runs if the
+    /// token is still the one it was scheduled with.
+    token: u64,
+    task: Option<JoinHandle<()>>,
+}
+
+impl IdleDestroy {
+    /// Stops the pending destroy and returns the token for the next one.
+    fn cancel(&mut self) -> u64 {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        self.token += 1;
+        self.token
+    }
 }
 
 fn clean_cli_value(value: &str) -> String {
@@ -227,34 +247,40 @@ fn picker_debug_log(message: &str) {
     let _ = message;
 }
 
-fn next_picker_idle_destroy_token(state: &PickerState) -> Result<u64, String> {
-    let mut token = state
-        .idle_destroy_token
+fn lock_idle_destroy(
+    state: &PickerState,
+) -> Result<std::sync::MutexGuard<'_, IdleDestroy>, String> {
+    state
+        .idle_destroy
         .lock()
-        .map_err(|_| "Picker idle destroy lock was poisoned.".to_string())?;
-    *token += 1;
-    Ok(*token)
+        .map_err(|_| "Picker idle destroy lock was poisoned.".to_string())
 }
 
 fn cancel_picker_idle_destroy(state: &PickerState) -> Result<(), String> {
-    let _ = next_picker_idle_destroy_token(state)?;
+    lock_idle_destroy(state)?.cancel();
     picker_debug_log("destroy canceled");
     Ok(())
 }
 
+/// Destroys the hidden picker after a while, to free its webview. Only one
+/// destroy is ever pending: scheduling another one aborts the previous task.
+/// The wait is a Tokio timer on Tauri's runtime, so no thread sleeps.
 fn schedule_picker_idle_destroy(app: &AppHandle, state: &PickerState) -> Result<(), String> {
-    let token = next_picker_idle_destroy_token(state)?;
+    let mut idle_destroy = lock_idle_destroy(state)?;
+    let token = idle_destroy.cancel();
     picker_debug_log("destroy scheduled");
 
     let app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(PICKER_IDLE_DESTROY_SECONDS));
+    idle_destroy.task = Some(tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(PICKER_IDLE_DESTROY_SECONDS)).await;
 
         let app_for_main = app.clone();
         if let Err(error) = app.run_on_main_thread(move || {
             let state = app_for_main.state::<PickerState>();
-            let current_token = match state.idle_destroy_token.lock() {
-                Ok(current) => *current,
+            // Aborting cannot stop a destroy already queued here, so the
+            // token still guards against destroying a picker shown again.
+            let current_token = match state.idle_destroy.lock() {
+                Ok(current) => current.token,
                 Err(_) => {
                     eprintln!("Hops picker: idle destroy lock was poisoned.");
                     return;
@@ -276,7 +302,7 @@ fn schedule_picker_idle_destroy(app: &AppHandle, state: &PickerState) -> Result<
         }) {
             eprintln!("Hops picker: could not schedule idle destroy on main thread: {error}");
         }
-    });
+    }));
 
     Ok(())
 }
@@ -337,43 +363,27 @@ fn store_picker_session(state: &PickerState, session: PickerSession) -> Result<(
     Ok(())
 }
 
-fn build_picker_session(
-    config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
-) -> Result<PickerSession, String> {
-    let mut running = current_running_processes(&config.browsers);
-    build_picker_session_with_running_processes(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-        &mut running,
-        &browser_executable_exists,
-    )
+/// What a picker is shown for: the link, where the request came from, why
+/// the picker is needed, and which browser and mode to preselect.
+pub(crate) struct PickerRequest<'a> {
+    pub(crate) url: &'a str,
+    pub(crate) source: PickerLaunchSource,
+    pub(crate) reason: RouteReason,
+    pub(crate) preferred_browser_id: Option<&'a str>,
+    pub(crate) preferred_private_mode: bool,
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
-fn build_picker_session_with_running_processes<F>(
+fn build_picker_session<F>(
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
     running: &mut RunningProcessSnapshot<F>,
     is_installed: &dyn Fn(&BrowserConfig) -> bool,
 ) -> Result<PickerSession, String>
 where
     F: FnMut() -> std::collections::HashSet<String>,
 {
-    let normalized_url = normalize_http_url(url)?.to_string();
+    let normalized_url = normalize_http_url(request.url)?.to_string();
+    let preferred_browser_id = request.preferred_browser_id;
 
     // Uninstalled browsers are left out: picking one could only fail.
     let mut browsers: Vec<PickerBrowserEntry> = config
@@ -399,10 +409,10 @@ where
 
     Ok(PickerSession {
         url: normalized_url,
-        reason,
-        source,
+        reason: request.reason,
+        source: request.source,
         preferred_browser_id: preferred_browser_id.map(str::to_string),
-        preferred_private_mode,
+        preferred_private_mode: request.preferred_private_mode,
         disable_transparency: config.disable_transparency,
         theme_preference: config.theme_preference,
         always_show_picker: config.always_show_picker,
@@ -460,42 +470,21 @@ where
     resolve_route_with_running_processes(config, url, running)
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_picker_window(
     app: &AppHandle,
     state: &PickerState,
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
 ) -> Result<(), String> {
-    cancel_picker_idle_destroy(state)?;
-
-    let session = build_picker_session(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-    )?;
-    show_picker_window_with_session(app, state, session)
+    let mut running = current_running_processes(&config.browsers);
+    show_picker_window_with_running_processes(app, state, config, request, &mut running)
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
 fn show_picker_window_with_running_processes<F>(
     app: &AppHandle,
     state: &PickerState,
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
     running: &mut RunningProcessSnapshot<F>,
 ) -> Result<(), String>
 where
@@ -503,16 +492,7 @@ where
 {
     cancel_picker_idle_destroy(state)?;
 
-    let session = build_picker_session_with_running_processes(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-        running,
-        &browser_executable_exists,
-    )?;
+    let session = build_picker_session(config, request, running, &browser_executable_exists)?;
     show_picker_window_with_session(app, state, session)
 }
 
@@ -603,16 +583,14 @@ fn launch_failed_picker_session<F>(
 where
     F: FnMut() -> std::collections::HashSet<String>,
 {
-    let mut session = build_picker_session_with_running_processes(
-        config,
+    let request = PickerRequest {
         url,
-        PickerLaunchSource::Route,
-        RouteReason::BrowserLaunchFailed,
-        None,
-        private_mode,
-        running,
-        is_installed,
-    )?;
+        source: PickerLaunchSource::Route,
+        reason: RouteReason::BrowserLaunchFailed,
+        preferred_browser_id: None,
+        preferred_private_mode: private_mode,
+    };
+    let mut session = build_picker_session(config, request, running, is_installed)?;
     session.notice = Some(format!("{error} {LAUNCH_FAILED_HINT}"));
     Ok(session)
 }
@@ -636,21 +614,6 @@ pub(crate) fn handle_incoming_url(
         &mut running,
     )?;
 
-    if decision.action == RouteAction::ShowPicker && decision.reason == RouteReason::CtrlShiftClick
-    {
-        show_picker_window(
-            app,
-            state,
-            &config,
-            url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
-        )?;
-        return Ok(decision);
-    }
-
     if decision.action == RouteAction::OpenBrowser {
         hide_picker_window_internal(app, state)?;
         if let Some(browser_id) = decision.browser_id.as_deref() {
@@ -673,17 +636,17 @@ pub(crate) fn handle_incoming_url(
             }
         }
     } else {
-        show_picker_window_with_running_processes(
-            app,
-            state,
-            &config,
+        // A Ctrl+Shift click lands here too: with `force_picker` the route
+        // decision never loads the running snapshot, so the picker scans
+        // at most once either way.
+        let request = PickerRequest {
             url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
-            &mut running,
-        )?;
+            source: PickerLaunchSource::Route,
+            reason: decision.reason,
+            preferred_browser_id: decision.browser_id.as_deref(),
+            preferred_private_mode: decision.private_mode,
+        };
+        show_picker_window_with_running_processes(app, state, &config, request, &mut running)?;
     }
 
     Ok(decision)
@@ -693,39 +656,11 @@ pub(crate) fn handle_incoming_url(
 mod tests {
     use super::*;
     use crate::browsers::normalize_path;
-    use crate::models::{
-        BrowserConfig, BrowserSource, RuleConfig, RulePatternType, ThemePreference,
-    };
+    use crate::models::{RuleConfig, RulePatternType};
+    use crate::test_support::{manual_browser, test_app_config};
     use std::cell::Cell;
     use std::collections::HashSet;
     use std::rc::Rc;
-
-    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
-        AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers,
-            rules: Vec::new(),
-        }
-    }
-
-    fn manual_browser(id: &str, name: &str) -> BrowserConfig {
-        BrowserConfig {
-            id: id.to_string(),
-            name: name.to_string(),
-            path: format!("C:\\Tools\\{name}\\browser.exe"),
-            private_flag: Some("--incognito".to_string()),
-            icon_key: Some(id.to_string()),
-            manual_trust: None,
-            source: BrowserSource::Manual,
-            is_hidden: false,
-        }
-    }
 
     fn test_rule(pattern_type: RulePatternType, pattern: &str, browser_id: &str) -> RuleConfig {
         RuleConfig {
@@ -773,17 +708,40 @@ mod tests {
     where
         F: FnMut() -> HashSet<String>,
     {
-        build_picker_session_with_running_processes(
+        build_picker_session(
             config,
-            url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
+            PickerRequest {
+                url,
+                source: PickerLaunchSource::Route,
+                reason: decision.reason,
+                preferred_browser_id: decision.browser_id.as_deref(),
+                preferred_private_mode: decision.private_mode,
+            },
             running,
             &|_| true,
         )
         .expect("picker session should build")
+    }
+
+    #[test]
+    fn cancelling_an_idle_destroy_aborts_its_task_and_bumps_the_token() {
+        let (sender, receiver) = std::sync::mpsc::channel::<()>();
+        let mut idle_destroy = IdleDestroy {
+            token: 0,
+            task: Some(tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                let _ = sender.send(());
+            })),
+        };
+
+        assert_eq!(idle_destroy.cancel(), 1);
+        assert!(idle_destroy.task.is_none());
+        // An aborted task is dropped with its sender, without sending.
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        );
+        assert_eq!(idle_destroy.cancel(), 2);
     }
 
     fn monitor(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> MonitorBounds {
@@ -1008,13 +966,15 @@ mod tests {
         config.default_browser_id = Some(default.id.clone());
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Route,
-            RouteReason::NoMatch,
-            Some(preferred.id.as_str()),
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Route,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: Some(preferred.id.as_str()),
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1041,13 +1001,15 @@ mod tests {
         config.default_browser_id = Some(default.id.clone());
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1073,13 +1035,15 @@ mod tests {
         ]);
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1102,13 +1066,15 @@ mod tests {
         ]);
         let mut running = running_snapshot(HashSet::new());
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1129,13 +1095,15 @@ mod tests {
         let config = test_app_config(vec![installed.clone(), missing.clone()]);
         let mut running = running_snapshot(HashSet::new());
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Route,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Route,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|browser| browser.id != missing.id,
         )

@@ -43,8 +43,10 @@ jobs:
       # The Rust steps take minutes, so they only run when the PR or the push
       # to main touches the backend or this workflow. The job itself always
       # runs, because a required status check that never reports blocks the
-      # merge. Manual runs always check Rust. If the previous commit cannot be
-      # found (a new branch, a force push), Rust is checked to be safe.
+      # merge. PickerWindow.tsx counts too, because a Rust test checks that it
+      # listens for the event name lib.rs emits. Manual runs always check Rust.
+      # If the previous commit cannot be found (a new branch, a force push),
+      # Rust is checked to be safe.
       - name: Detect Rust changes
         id: changes
         shell: bash
@@ -65,7 +67,7 @@ jobs:
             changed=$(git diff --name-only "$base" HEAD)
             echo "Changed files:"
             echo "$changed"
-            if ! grep -qE '^(src-tauri/|\.github/workflows/ci\.yml$)' <<< "$changed"; then
+            if ! grep -qE '^(src-tauri/|src/features/picker/PickerWindow\.tsx$|\.github/workflows/ci\.yml$)' <<< "$changed"; then
               rust=false
             fi
           fi
