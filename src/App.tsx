@@ -7,13 +7,10 @@ import {
   loadConfig,
   takeConfigRecoveryNotice,
   openConfigFolder,
-  previewRouteWithConfig,
   resetConfig,
-  routeAndOpenWithConfig,
   saveConfig,
   setStartWithWindowsEnabled as saveStartWithWindowsEnabled,
   showSettingsWindow,
-  showPickerForUrl,
 } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
 import {
@@ -38,6 +35,7 @@ import { useBrowserManager } from "./features/browsers/useBrowserManager";
 import { useRunningBrowsers } from "./features/browsers/useRunningBrowsers";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { RouterTester } from "./features/router/RouterTester";
+import { useRouteTester } from "./features/router/useRouteTester";
 import { AddRuleModal } from "./features/rules/AddRuleModal";
 import { RulesTab } from "./features/rules/RulesTab";
 import { useRuleManager } from "./features/rules/useRuleManager";
@@ -46,8 +44,6 @@ import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
   applySettingsDraft,
   EMPTY_STATUS,
-  rejectAfter,
-  ROUTE_OPEN_TIMEOUT_MS,
 } from "./lib/appTypes";
 import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useConfigStore } from "./hooks/useConfigStore";
@@ -56,7 +52,6 @@ import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
 import type {
   AppConfig,
   FormModal,
-  RouteDecision,
   SettingsActionPanel,
   StatusState,
   TabId,
@@ -87,13 +82,6 @@ function App() {
   const [deleteConfirmation, setDeleteConfirmation] =
     useState<DeleteConfirmation | null>(null);
 
-  const [routeInput, setRouteInput] = useState(
-    "https://github.com/openai/codex",
-  );
-  const [routeDecision, setRouteDecision] = useState<RouteDecision | null>(
-    null,
-  );
-  const [isRouting, setIsRouting] = useState(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
 
   const configStore = useConfigStore({ setStatus });
@@ -166,6 +154,12 @@ function App() {
     refreshRunningState,
   });
   useCloseGuard({ store: configStore, cancelPendingBrowserSaves });
+  const routeTester = useRouteTester({
+    config,
+    setStatus,
+    showFeedbackModal,
+    refreshRunningState,
+  });
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((current) => !current);
@@ -346,7 +340,7 @@ function App() {
       applyLoadedConfig(reset);
       resetRuleEditState();
       resetBrowserEditState();
-      setRouteDecision(null);
+      routeTester.clearRouteDecision();
       setStatus({
         kind: "success",
         text: "Configuration reset. Rules and manual browsers were cleared, and detected browsers were restored.",
@@ -398,71 +392,6 @@ function App() {
       });
     } finally {
       setIsStartingOnboarding(false);
-    }
-  }
-
-  async function runRoutePreview(openImmediately: boolean) {
-    if (!config) {
-      setStatus({ kind: "error", text: "Configuration is not loaded yet." });
-      return;
-    }
-
-    if (!routeInput.trim()) {
-      setStatus({ kind: "error", text: "Enter a URL to test routing." });
-      return;
-    }
-
-    setIsRouting(true);
-    try {
-      const trimmedRouteInput = routeInput.trim();
-      const decision = openImmediately
-        ? await rejectAfter(
-            routeAndOpenWithConfig(config, trimmedRouteInput),
-            ROUTE_OPEN_TIMEOUT_MS,
-            "Opening the routed browser timed out after 10 seconds.",
-          )
-        : await previewRouteWithConfig(config, trimmedRouteInput);
-
-      setRouteDecision(decision);
-      if (openImmediately && decision.action === "open_browser") {
-        setStatus({
-          kind: "success",
-          text: `Opened in ${decision.browserName ?? "selected browser"}.`,
-        });
-      } else if (openImmediately && decision.action === "show_picker") {
-        await rejectAfter(
-          showPickerForUrl(
-            trimmedRouteInput,
-            decision.browserId,
-            decision.privateMode,
-          ),
-          ROUTE_OPEN_TIMEOUT_MS,
-          "Opening the picker timed out after 10 seconds.",
-        );
-        setStatus({
-          kind: "success",
-          text: "Routing requires the picker. The picker window was opened.",
-        });
-      } else {
-        setStatus({ kind: "success", text: "Routing preview updated." });
-      }
-      await refreshRunningState({ force: true });
-    } catch (error) {
-      const message = errorMessage(error);
-      setStatus({ kind: "error", text: `Routing failed: ${message}` });
-      if (
-        openImmediately &&
-        error instanceof Error &&
-        error.name === "TimeoutError"
-      ) {
-        showFeedbackModal({
-          title: "Route opening timed out",
-          message: `Hops could not open the route within 10 seconds.\n\n${message}`,
-          kind: "warning",
-        });
-      }
-    } finally {
-      setIsRouting(false);
     }
   }
 
@@ -725,12 +654,12 @@ function App() {
 
           {activeTab === "router" ? (
             <RouterTester
-              routeDecision={routeDecision}
-              routeInput={routeInput}
-              isRouting={isRouting}
-              onRouteInputChange={setRouteInput}
+              routeDecision={routeTester.routeDecision}
+              routeInput={routeTester.routeInput}
+              isRouting={routeTester.isRouting}
+              onRouteInputChange={routeTester.setRouteInput}
               onRunRoutePreview={(shouldOpen) =>
-                void runRoutePreview(shouldOpen)
+                void routeTester.runRoutePreview(shouldOpen)
               }
             />
           ) : null}
