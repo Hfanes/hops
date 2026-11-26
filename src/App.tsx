@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FiPlus } from "react-icons/fi";
 import {
   getAppAboutInfo,
@@ -50,6 +49,7 @@ import {
   rejectAfter,
   ROUTE_OPEN_TIMEOUT_MS,
 } from "./lib/appTypes";
+import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useConfigStore } from "./hooks/useConfigStore";
 import { useDocumentTheme } from "./hooks/useDocumentTheme";
 import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
@@ -94,7 +94,6 @@ function App() {
     null,
   );
   const [isRouting, setIsRouting] = useState(false);
-  const isClosingRef = useRef(false);
   const contentAreaRef = useRef<HTMLDivElement | null>(null);
 
   const configStore = useConfigStore({ setStatus });
@@ -105,11 +104,8 @@ function App() {
     settingsDraft,
     isSaving,
     applyLoadedConfig,
-    persistConfig,
     enqueueConfigTask,
-    scheduleSettingsSave,
     cancelScheduledSettingsSave,
-    waitForQueuedSaves,
     updateSettingsDraft,
     updateThemePreference,
   } = configStore;
@@ -169,6 +165,7 @@ function App() {
     onRequestDelete: setDeleteConfirmation,
     refreshRunningState,
   });
+  useCloseGuard({ store: configStore, cancelPendingBrowserSaves });
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((current) => !current);
@@ -246,65 +243,8 @@ function App() {
     setFormModal(null);
   }, [activeTab]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlistenClose: (() => void) | null = null;
-
-    void getCurrentWindow()
-      .onCloseRequested((event) => {
-        event.preventDefault();
-        void closeSettingsWindow();
-      })
-      .then((unlisten) => {
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        unlistenClose = unlisten;
-      })
-      .catch((error) => {
-        console.warn("Could not listen for Hops close requests.", error);
-      });
-
-    return () => {
-      disposed = true;
-      unlistenClose?.();
-    };
-  }, []);
-
   function showFeedbackModal(options: FeedbackMessage) {
     setFeedbackModal(options);
-  }
-
-  async function closeSettingsWindow() {
-    if (isClosingRef.current) {
-      return;
-    }
-
-    isClosingRef.current = true;
-    const hasPendingSettingsSave = cancelScheduledSettingsSave();
-    const hasPendingBrowserSaves = cancelPendingBrowserSaves();
-
-    try {
-      const latestConfig = configRef.current;
-      if (
-        latestConfig &&
-        (hasPendingSettingsSave || hasPendingBrowserSaves)
-      ) {
-        await persistConfig(latestConfig, {
-          errorPrefix: "Could not save changes before closing",
-          applySavedConfig: false,
-        });
-      }
-
-      await waitForQueuedSaves();
-      await getCurrentWindow().destroy();
-    } catch {
-      isClosingRef.current = false;
-      if (configRef.current) {
-        scheduleSettingsSave(configRef.current);
-      }
-    }
   }
 
   function confirmDelete() {
