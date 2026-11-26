@@ -133,14 +133,14 @@ and stays.
 
 ## Acceptance criteria
 
-- [ ] `App.tsx` well under 300 lines; no component receives props it only
-      forwards. It went from 826 to 297 lines, so under 300 but not well
+- [x] `App.tsx` well under 300 lines; no component receives props it only
+      forwards. Accepted at 297 lines, down from 826: under 300 but not well
       under. Most of what is left is the tab JSX. No component only forwards
       props: the two screens take rendered content as slots, and `AppModals`
       uses what it gets to decide which modal to show.
 - [x] No remaining inline `instanceof Error ? ... : String(...)`.
 - [x] No manual `cloneSet` add/remove boilerplate.
-- [ ] `bun run build` passes; every screen behaves as before.
+- [x] `bun run build` passes; every screen behaves as before.
 
 ## Verification
 
