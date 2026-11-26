@@ -1,5 +1,6 @@
 import { PatternTypePicker } from "../../components/common/PatternTypePicker";
 import type { BrowserConfig, RuleConfig } from "../../types";
+import { defaultRuleLabel, MAX_RULE_NAME_LENGTH, ruleLabel } from "./ruleLabel";
 
 export function RulesTab({
   rules,
@@ -37,7 +38,7 @@ export function RulesTab({
           {rules.map((rule, index) => (
             <article key={rule.id} className="card">
               <div className="card-title">
-                <strong>Rule {index + 1}</strong>
+                <strong>{ruleLabel(rule, index)}</strong>
                 <div className="inline-actions">
                   <button
                     type="button"
@@ -62,6 +63,20 @@ export function RulesTab({
                   </button>
                 </div>
               </div>
+
+              <label>
+                Name
+                <input
+                  value={rule.name ?? ""}
+                  onChange={(event) =>
+                    onUpdateRule(rule.id, {
+                      name: event.currentTarget.value,
+                    })
+                  }
+                  maxLength={MAX_RULE_NAME_LENGTH}
+                  placeholder={defaultRuleLabel(index)}
+                />
+              </label>
 
               <label>
                 Pattern

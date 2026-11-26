@@ -216,6 +216,7 @@ function App() {
         onCloseFormModal={() => setFormModal(null)}
         browsers={browsers}
         rules={rules}
+        ruleCount={config.rules.length}
         visibleBrowsers={visibleBrowsers}
         isSaving={configStore.isSaving}
         deleteConfirmation={deleteConfirmation}
