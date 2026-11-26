@@ -59,6 +59,10 @@ pub(crate) enum BrowserRecognition {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuleConfig {
     pub(crate) id: String,
+    /// Shown instead of the positional "Rule N" label. `None` when unnamed;
+    /// configs written before rules had names load as `None`.
+    #[serde(default)]
+    pub(crate) name: Option<String>,
     pub(crate) pattern: String,
     pub(crate) pattern_type: RulePatternType,
     pub(crate) browser_id: String,
