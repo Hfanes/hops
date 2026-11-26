@@ -37,7 +37,6 @@ struct KnownBrowserDefinition {
     display_name: &'static str,
     icon_key: &'static str,
     family: BrowserFamily,
-    private_flag_override: Option<&'static str>,
     use_family_private_flag: bool,
     known_install_path_suffixes: &'static [&'static str],
 }
@@ -361,6 +360,34 @@ fn is_hops_executable(path: &str) -> bool {
         .is_ok_and(|current| normalize_path(&current.to_string_lossy()) == normalized)
 }
 
+/// Why a path cannot be a browser executable, judged from the text alone.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+enum ExecutablePathError {
+    Empty,
+    NotExe,
+    Hops,
+}
+
+/// The trimmed path, if it is not empty, ends in `.exe` and is not Hops.
+/// Callers word the first two errors for their own context.
+fn check_executable_path(path: &str) -> Result<&str, ExecutablePathError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(ExecutablePathError::Empty);
+    }
+
+    #[cfg(target_os = "windows")]
+    if !path.to_ascii_lowercase().ends_with(".exe") {
+        return Err(ExecutablePathError::NotExe);
+    }
+
+    if is_hops_executable(path) {
+        return Err(ExecutablePathError::Hops);
+    }
+
+    Ok(path)
+}
+
 /// Whether the browser's executable is on disk. Kept apart from
 /// [`validate_browser_entry`] so an uninstalled browser does not block saving
 /// unrelated settings; it only fails when Hops tries to launch it.
@@ -390,25 +417,16 @@ pub(crate) fn validate_browser_for_launch(
 pub(crate) fn validate_browser_entry(
     browser: &BrowserConfig,
 ) -> Result<ValidatedBrowserLaunch, String> {
-    let path = browser.path.trim();
-    if path.is_empty() {
-        return Err(format!(
-            "Browser '{}' is missing an executable path.",
-            browser.name
-        ));
-    }
-
-    #[cfg(target_os = "windows")]
-    if !path.to_ascii_lowercase().ends_with(".exe") {
-        return Err(format!(
+    let path = check_executable_path(&browser.path).map_err(|error| match error {
+        ExecutablePathError::Empty => {
+            format!("Browser '{}' is missing an executable path.", browser.name)
+        }
+        ExecutablePathError::NotExe => format!(
             "Browser '{}' must point to a .exe executable.",
             browser.name
-        ));
-    }
-
-    if is_hops_executable(path) {
-        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
-    }
+        ),
+        ExecutablePathError::Hops => HOPS_SELF_LAUNCH_ERROR.to_string(),
+    })?;
 
     let recognition = classify_browser_path(path, Some(browser.name.as_str()))?;
     let private_flag =
@@ -433,19 +451,14 @@ pub(crate) fn validate_browser_entry(
 pub(crate) fn validate_manual_browser_request(
     request: &ManualBrowserValidationRequest,
 ) -> Result<ManualBrowserValidationResult, String> {
-    let path = request.path.trim();
-    if path.is_empty() {
-        return Err("Manual browser needs an executable path.".to_string());
-    }
-
-    #[cfg(target_os = "windows")]
-    if !path.to_ascii_lowercase().ends_with(".exe") {
-        return Err("Manual browser executable must be a .exe file.".to_string());
-    }
-
-    if is_hops_executable(path) {
-        return Err(HOPS_SELF_LAUNCH_ERROR.to_string());
-    }
+    let path = check_executable_path(&request.path).map_err(|error| {
+        match error {
+            ExecutablePathError::Empty => "Manual browser needs an executable path.",
+            ExecutablePathError::NotExe => "Manual browser executable must be a .exe file.",
+            ExecutablePathError::Hops => HOPS_SELF_LAUNCH_ERROR,
+        }
+        .to_string()
+    })?;
 
     if !Path::new(path).exists() {
         return Err(format!("Browser executable does not exist: {path}"));
@@ -511,30 +524,23 @@ pub(crate) fn resolve_browser_metadata(
     let exe_name = exe_name.to_lowercase();
     let normalized_path = normalize_path(path);
 
-    if let Some(definition) = known_browser_definitions().iter().find(|definition| {
-        definition
-            .known_install_path_suffixes
+    let definitions = known_browser_definitions();
+    let by_install_path = || {
+        definitions.iter().find(|definition| {
+            definition
+                .known_install_path_suffixes
+                .iter()
+                .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
+        })
+    };
+    let by_executable_name = || {
+        definitions
             .iter()
-            .any(|suffix| normalized_path.ends_with(&normalize_path(suffix)))
-    }) {
-        return ResolvedBrowserMetadata {
-            name: definition.display_name.to_string(),
-            family: definition.family,
-            private_flag: resolved_private_flag_for_definition(definition),
-            icon_key: Some(definition.icon_key.to_string()),
-        };
-    }
+            .find(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
+    };
 
-    if let Some(definition) = known_browser_definitions()
-        .iter()
-        .find(|definition| definition.executable_aliases.contains(&exe_name.as_str()))
-    {
-        return ResolvedBrowserMetadata {
-            name: definition.display_name.to_string(),
-            family: definition.family,
-            private_flag: resolved_private_flag_for_definition(definition),
-            icon_key: Some(definition.icon_key.to_string()),
-        };
+    if let Some(definition) = by_install_path().or_else(by_executable_name) {
+        return metadata_from_definition(definition);
     }
 
     let family = BrowserFamily::Unknown;
@@ -629,17 +635,19 @@ fn browser_family_key(family: BrowserFamily) -> Option<&'static str> {
     }
 }
 
-fn resolved_private_flag_for_definition(definition: &KnownBrowserDefinition) -> Option<String> {
-    definition
-        .private_flag_override
-        .map(str::to_string)
-        .or_else(|| {
-            if definition.use_family_private_flag {
-                default_private_flag_for_family(definition.family)
-            } else {
-                None
-            }
-        })
+fn metadata_from_definition(definition: &KnownBrowserDefinition) -> ResolvedBrowserMetadata {
+    let private_flag = if definition.use_family_private_flag {
+        default_private_flag_for_family(definition.family)
+    } else {
+        None
+    };
+
+    ResolvedBrowserMetadata {
+        name: definition.display_name.to_string(),
+        family: definition.family,
+        private_flag,
+        icon_key: Some(definition.icon_key.to_string()),
+    }
 }
 
 fn default_private_flag_for_family(family: BrowserFamily) -> Option<String> {
@@ -659,7 +667,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Google Chrome",
             icon_key: "chrome",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Google\\Chrome\\Application\\chrome.exe"],
         },
@@ -668,7 +675,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Tor Browser",
             icon_key: "tor",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: false,
             known_install_path_suffixes: &["Tor Browser\\Browser\\firefox.exe"],
         },
@@ -677,7 +683,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Mozilla Firefox",
             icon_key: "firefox",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Mozilla Firefox\\firefox.exe"],
         },
@@ -686,7 +691,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "LibreWolf",
             icon_key: "librewolf",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["LibreWolf\\librewolf.exe"],
         },
@@ -695,7 +699,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Waterfox",
             icon_key: "generic",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Waterfox\\waterfox.exe"],
         },
@@ -704,7 +707,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Floorp",
             icon_key: "floorp",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Floorp\\floorp.exe"],
         },
@@ -713,7 +715,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Zen",
             icon_key: "zen",
             family: BrowserFamily::Firefox,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Zen Browser\\zen.exe"],
         },
@@ -722,7 +723,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Microsoft Edge",
             icon_key: "edge",
             family: BrowserFamily::Edge,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Microsoft\\Edge\\Application\\msedge.exe"],
         },
@@ -731,7 +731,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Brave",
             icon_key: "brave",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["BraveSoftware\\Brave-Browser\\Application\\brave.exe"],
         },
@@ -740,7 +739,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Opera",
             icon_key: "opera",
             family: BrowserFamily::Opera,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Programs\\Opera\\opera.exe", "Opera\\launcher.exe"],
         },
@@ -749,7 +747,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Vivaldi",
             icon_key: "vivaldi",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["Vivaldi\\Application\\vivaldi.exe"],
         },
@@ -758,7 +755,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Arc",
             icon_key: "arc",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["The Browser Company\\Arc\\Arc.exe"],
         },
@@ -767,7 +763,6 @@ fn known_browser_definitions() -> &'static [KnownBrowserDefinition] {
             display_name: "Helium",
             icon_key: "helium",
             family: BrowserFamily::Chromium,
-            private_flag_override: None,
             use_family_private_flag: true,
             known_install_path_suffixes: &["imput\\Helium\\Application\\chrome.exe"],
         },
