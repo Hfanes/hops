@@ -445,7 +445,8 @@ pub(crate) fn open_url_with_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{BrowserConfig, BrowserSource, RuleConfig, ThemePreference};
+    use crate::models::RuleConfig;
+    use crate::test_support::{manual_browser, test_app_config};
     use std::collections::HashSet;
 
     fn test_rule(pattern_type: RulePatternType, pattern: &str) -> RuleConfig {
@@ -456,33 +457,6 @@ mod tests {
             browser_id: "chrome".to_string(),
             private_mode: false,
             enabled: true,
-        }
-    }
-
-    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
-        AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers,
-            rules: Vec::new(),
-        }
-    }
-
-    fn manual_browser(id: &str, name: &str) -> BrowserConfig {
-        BrowserConfig {
-            id: id.to_string(),
-            name: name.to_string(),
-            path: format!("C:\\Tools\\{name}\\browser.exe"),
-            private_flag: Some("--incognito".to_string()),
-            icon_key: Some("generic".to_string()),
-            manual_trust: None,
-            source: BrowserSource::Manual,
-            is_hidden: false,
         }
     }
 

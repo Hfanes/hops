@@ -983,37 +983,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppConfig, BrowserConfig, BrowserSource, ThemePreference};
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::models::{BrowserConfig, BrowserSource};
+    use crate::test_support::{browser_at, temp_executable, test_app_config};
     #[cfg(target_os = "windows")]
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
-
-    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
-        AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers,
-            rules: Vec::new(),
-        }
-    }
-
-    fn temp_executable_path(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("hops-browser-test-{unique}"));
-        fs::create_dir_all(&dir).expect("temp browser test dir should create");
-        let path = dir.join(name);
-        fs::write(&path, []).expect("temp executable placeholder should write");
-        path
-    }
 
     #[test]
     fn chromium_family_metadata_gets_incognito_flag() {
@@ -1287,7 +1260,7 @@ mod tests {
 
     #[test]
     fn manual_browser_validation_accepts_known_browser_path_and_expected_flag() {
-        let path = temp_executable_path("chrome.exe");
+        let (_dir, path) = temp_executable("chrome.exe");
         let browser = BrowserConfig {
             id: "manual-chrome".to_string(),
             name: "Portable Chrome".to_string(),
@@ -1302,14 +1275,11 @@ mod tests {
         let validated =
             validate_browser_for_launch(&browser).expect("manual chrome should validate");
         assert_eq!(validated.private_flag.as_deref(), Some("--incognito"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn manual_browser_validation_requires_confirmation_for_unknown_executable() {
-        let path = temp_executable_path("notepad.exe");
+        let (_dir, path) = temp_executable("notepad.exe");
         let browser = BrowserConfig {
             id: "manual-notepad".to_string(),
             name: "Definitely Not A Browser".to_string(),
@@ -1324,14 +1294,11 @@ mod tests {
         let error =
             validate_browser_for_launch(&browser).expect_err("unknown exe should need trust");
         assert!(error.contains("needs explicit confirmation"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn manual_browser_validation_rejects_unexpected_private_flag() {
-        let path = temp_executable_path("firefox.exe");
+        let (_dir, path) = temp_executable("firefox.exe");
         let browser = BrowserConfig {
             id: "manual-firefox".to_string(),
             name: "Firefox".to_string(),
@@ -1346,9 +1313,6 @@ mod tests {
         let error =
             validate_browser_for_launch(&browser).expect_err("unexpected flag should reject");
         assert!(error.contains("only allows the private flag"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1365,7 +1329,7 @@ mod tests {
 
     #[test]
     fn recognized_firefox_family_manual_browser_gets_safe_default_flag() {
-        let path = temp_executable_path("floorp.exe");
+        let (_dir, path) = temp_executable("floorp.exe");
         let request = ManualBrowserValidationRequest {
             name: "Portable Floorp".to_string(),
             path: path.to_string_lossy().to_string(),
@@ -1379,14 +1343,11 @@ mod tests {
         assert_eq!(validated.manual_trust, Some(ManualBrowserTrust::Verified));
         assert_eq!(validated.private_flag.as_deref(), Some("--private-window"));
         assert_eq!(validated.icon_key.as_deref(), Some("floorp"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn unknown_manual_browser_can_be_user_confirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let request = ManualBrowserValidationRequest {
             name: "Custom Browser".to_string(),
             path: path.to_string_lossy().to_string(),
@@ -1414,14 +1375,11 @@ mod tests {
             is_hidden: false,
         };
         assert!(validate_browser_for_launch(&browser).is_ok());
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn normalize_manual_browser_entries_keeps_previously_verified_unknown_as_confirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let mut config = test_app_config(vec![BrowserConfig {
             id: "manual-custom".to_string(),
             name: "Custom Browser".to_string(),
@@ -1441,14 +1399,11 @@ mod tests {
         );
         assert_eq!(browser.private_flag, None);
         assert!(validate_browser_for_launch(browser).is_ok());
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
     fn normalize_manual_browser_entries_leaves_unconfirmed_unknown_unconfirmed() {
-        let path = temp_executable_path("custom-browser.exe");
+        let (_dir, path) = temp_executable("custom-browser.exe");
         let mut config = test_app_config(vec![BrowserConfig {
             id: "manual-custom".to_string(),
             name: "Custom Browser".to_string(),
@@ -1462,9 +1417,6 @@ mod tests {
 
         normalize_manual_browser_entries(&mut config);
         assert_eq!(config.browsers[0].manual_trust, None);
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1483,7 +1435,7 @@ mod tests {
             assert_eq!(result.name, name);
         }
 
-        let path = temp_executable_path("payload.exe");
+        let (_dir, path) = temp_executable("payload.exe");
         let browser = BrowserConfig {
             id: "manual-fake-chrome".to_string(),
             name: "Google Chrome".to_string(),
@@ -1497,9 +1449,6 @@ mod tests {
         let error = validate_browser_for_launch(&browser)
             .expect_err("a renamed executable should need confirmation");
         assert!(error.contains("needs explicit confirmation"));
-
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
     }
 
     #[test]
@@ -1565,19 +1514,6 @@ mod tests {
             assert_eq!(result.recognition, BrowserRecognition::Known, "{path}");
             assert_eq!(result.family, Some(family), "{path}");
             assert_eq!(result.private_flag.as_deref(), private_flag, "{path}");
-        }
-    }
-
-    fn browser_at(path: &str) -> BrowserConfig {
-        BrowserConfig {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            path: path.to_string(),
-            private_flag: None,
-            icon_key: None,
-            manual_trust: None,
-            source: BrowserSource::Manual,
-            is_hidden: false,
         }
     }
 
@@ -1659,11 +1595,11 @@ mod tests {
 
     #[test]
     fn missing_executable_passes_entry_checks_but_not_launch() {
-        let path = temp_executable_path("chrome.exe");
+        let (dir, path) = temp_executable("chrome.exe");
         let mut browser = browser_at(&path.to_string_lossy());
         browser.private_flag = Some("--incognito".to_string());
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("temp path should have parent"));
+        // Deleting the directory uninstalls the browser.
+        drop(dir);
 
         assert!(!browser_executable_exists(&browser));
         let entry = validate_browser_entry(&browser).expect("entry checks do not touch the disk");

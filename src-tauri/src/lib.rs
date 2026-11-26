@@ -9,6 +9,8 @@ mod models;
 mod picker;
 mod registration;
 mod routing;
+#[cfg(test)]
+mod test_support;
 mod tray;
 
 use config::{load_or_init_config, ConfigCache};

@@ -630,39 +630,11 @@ pub(crate) fn handle_incoming_url(
 mod tests {
     use super::*;
     use crate::browsers::normalize_path;
-    use crate::models::{
-        BrowserConfig, BrowserSource, RuleConfig, RulePatternType, ThemePreference,
-    };
+    use crate::models::{RuleConfig, RulePatternType};
+    use crate::test_support::{manual_browser, test_app_config};
     use std::cell::Cell;
     use std::collections::HashSet;
     use std::rc::Rc;
-
-    fn test_app_config(browsers: Vec<BrowserConfig>) -> AppConfig {
-        AppConfig {
-            version: 1,
-            always_show_picker: false,
-            use_defaults_when_not_running: false,
-            disable_transparency: false,
-            theme_preference: ThemePreference::Light,
-            onboarding_completed: true,
-            default_browser_id: None,
-            browsers,
-            rules: Vec::new(),
-        }
-    }
-
-    fn manual_browser(id: &str, name: &str) -> BrowserConfig {
-        BrowserConfig {
-            id: id.to_string(),
-            name: name.to_string(),
-            path: format!("C:\\Tools\\{name}\\browser.exe"),
-            private_flag: Some("--incognito".to_string()),
-            icon_key: Some(id.to_string()),
-            manual_trust: None,
-            source: BrowserSource::Manual,
-            is_hidden: false,
-        }
-    }
 
     fn test_rule(pattern_type: RulePatternType, pattern: &str, browser_id: &str) -> RuleConfig {
         RuleConfig {
