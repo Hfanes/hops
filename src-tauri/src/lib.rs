@@ -28,6 +28,8 @@ const CONFIG_FILENAME: &str = "config.json";
 const HOPS_APP_NAME: &str = "Hops";
 const HOPS_PROTOCOL_PROG_ID: &str = "HopsURL";
 const PICKER_WINDOW_LABEL: &str = "picker";
+/// Also defined in `src/features/picker/PickerWindow.tsx`; a test below
+/// checks that the two match.
 const PICKER_SESSION_EVENT: &str = "picker-session";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -181,7 +183,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::should_keep_tray_app_resident;
+    use super::{should_keep_tray_app_resident, PICKER_SESSION_EVENT};
+
+    #[test]
+    fn picker_window_listens_for_the_event_the_backend_emits() {
+        let picker_window = include_str!("../../src/features/picker/PickerWindow.tsx");
+        let definition = format!("const PICKER_SESSION_EVENT = \"{PICKER_SESSION_EVENT}\";");
+        assert!(
+            picker_window.contains(&definition),
+            "PickerWindow.tsx should define {definition}"
+        );
+    }
 
     #[test]
     fn keeps_running_when_the_last_window_is_destroyed() {
