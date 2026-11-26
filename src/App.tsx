@@ -6,9 +6,6 @@ import {
   getConfigFilePath,
   loadConfig,
   takeConfigRecoveryNotice,
-  openConfigFolder,
-  resetConfig,
-  saveConfig,
 } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
 import {
@@ -39,9 +36,9 @@ import { AddRuleModal } from "./features/rules/AddRuleModal";
 import { RulesTab } from "./features/rules/RulesTab";
 import { useRuleManager } from "./features/rules/useRuleManager";
 import { SettingsTab } from "./features/settings/SettingsTab";
+import { useConfigActions } from "./features/settings/useConfigActions";
 import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
-  applySettingsDraft,
   EMPTY_STATUS,
 } from "./lib/appTypes";
 import { useCloseGuard } from "./hooks/useCloseGuard";
@@ -50,7 +47,6 @@ import { useDocumentTheme } from "./hooks/useDocumentTheme";
 import { useSidebarShortcut } from "./hooks/useSidebarShortcut";
 import type {
   FormModal,
-  SettingsActionPanel,
   StatusState,
   TabId,
 } from "./types";
@@ -61,11 +57,7 @@ function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [status, setStatus] = useState<StatusState>(EMPTY_STATUS);
   const [isLoading, setIsLoading] = useState(true);
-  const [isResettingConfig, setIsResettingConfig] = useState(false);
-  const [isStartingOnboarding, setIsStartingOnboarding] = useState(false);
   const [configPath, setConfigPath] = useState<string | null>(null);
-  const [settingsActionPanel, setSettingsActionPanel] =
-    useState<SettingsActionPanel>("none");
   const [formModal, setFormModal] = useState<FormModal>(null);
 
   const [feedbackModal, setFeedbackModal] = useState<FeedbackMessage | null>(
@@ -84,8 +76,6 @@ function App() {
     settingsDraft,
     isSaving,
     applyLoadedConfig,
-    enqueueConfigTask,
-    cancelScheduledSettingsSave,
     updateSettingsDraft,
     updateThemePreference,
   } = configStore;
@@ -224,6 +214,18 @@ function App() {
     setFormModal,
     onRequestDelete: setDeleteConfirmation,
   });
+  const configActions = useConfigActions({
+    store: configStore,
+    setStatus,
+    cancelPendingBrowserSaves,
+    refreshRunningState,
+    onConfigReset: () => {
+      resetRuleEditState();
+      resetBrowserEditState();
+      routeTester.clearRouteDecision();
+    },
+    onOnboardingRestarted: () => onboarding.setStep(0),
+  });
 
   useEffect(() => {
     setFormModal(null);
@@ -246,89 +248,6 @@ function App() {
     }
 
     deleteRule(confirmation.ruleId);
-  }
-
-  async function openConfigurationFolder() {
-    try {
-      await openConfigFolder();
-      setStatus({
-        kind: "success",
-        text: "Opened config folder.",
-      });
-    } catch (error) {
-      const message = errorMessage(error);
-      setStatus({
-        kind: "error",
-        text: `Could not open config folder: ${message}`,
-      });
-    }
-  }
-
-  async function handleResetConfig() {
-    setIsResettingConfig(true);
-    try {
-      // Pending edits are discarded by the reset, so drop them instead of
-      // saving them, and queue the reset after saves already in flight.
-      cancelScheduledSettingsSave();
-      cancelPendingBrowserSaves();
-      const reset = await enqueueConfigTask(() => resetConfig());
-      setSettingsActionPanel("none");
-      applyLoadedConfig(reset);
-      resetRuleEditState();
-      resetBrowserEditState();
-      routeTester.clearRouteDecision();
-      setStatus({
-        kind: "success",
-        text: "Configuration reset. Rules and manual browsers were cleared, and detected browsers were restored.",
-      });
-      await refreshRunningState({ force: true });
-    } catch (error) {
-      const message = errorMessage(error);
-      setStatus({
-        kind: "error",
-        text: `Could not reset configuration: ${message}`,
-      });
-    } finally {
-      setIsResettingConfig(false);
-    }
-  }
-
-  async function handleRerunOnboarding(shouldResetFirst: boolean) {
-    if (!config) {
-      return;
-    }
-
-    setIsStartingOnboarding(true);
-    try {
-      const nextConfig = shouldResetFirst
-        ? await saveConfig({
-            ...(await resetConfig()),
-            onboardingCompleted: false,
-          })
-        : await saveConfig({
-            ...applySettingsDraft(config, settingsDraft),
-            onboardingCompleted: false,
-          });
-
-      onboarding.setStep(0);
-      setSettingsActionPanel("none");
-      applyLoadedConfig(nextConfig);
-      setStatus({
-        kind: "success",
-        text: shouldResetFirst
-          ? "Configuration reset. Onboarding restarted from step 1."
-          : "Onboarding restarted with your current configuration intact.",
-      });
-      await refreshRunningState({ force: true });
-    } catch (error) {
-      const message = errorMessage(error);
-      setStatus({
-        kind: "error",
-        text: `Could not restart onboarding: ${message}`,
-      });
-    } finally {
-      setIsStartingOnboarding(false);
-    }
   }
 
   function scrollCurrentPageToTop() {
@@ -530,9 +449,9 @@ function App() {
               settingsDraft={settingsDraft}
               visibleBrowsers={visibleBrowsers}
               theme={theme}
-              settingsActionPanel={settingsActionPanel}
-              isResettingConfig={isResettingConfig}
-              isStartingOnboarding={isStartingOnboarding}
+              settingsActionPanel={configActions.settingsActionPanel}
+              isResettingConfig={configActions.isResettingConfig}
+              isStartingOnboarding={configActions.isStartingOnboarding}
               registrationStatus={registrationStatus}
               isRegistering={isRegistering}
               onUpdateStartWithWindows={(enabled) =>
@@ -540,12 +459,12 @@ function App() {
               }
               onUpdateSettingsDraft={updateSettingsDraft}
               onUpdateThemePreference={updateThemePreference}
-              onSetSettingsActionPanel={setSettingsActionPanel}
-              onResetConfig={() => void handleResetConfig()}
+              onSetSettingsActionPanel={configActions.setSettingsActionPanel}
+              onResetConfig={() => void configActions.resetConfig()}
               onRerunOnboarding={(resetFirst) =>
-                void handleRerunOnboarding(resetFirst)
+                void configActions.rerunOnboarding(resetFirst)
               }
-              onOpenConfigFolder={() => void openConfigurationFolder()}
+              onOpenConfigFolder={() => void configActions.openConfigFolder()}
               onOpenDefaultAppsSettings={openDefaultAppsSettings}
               onRegisterBrowserIntegration={() =>
                 void registerBrowserIntegration()
