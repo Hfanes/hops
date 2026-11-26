@@ -1,66 +1,32 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 import { BrowserIcon } from "../../components/common/BrowserIcon";
 import type {
   BrowserConfig,
-  BrowserRegistrationStatus,
-  SettingsActionPanel,
   SettingsDraft,
   ThemePreference,
 } from "../../types";
+import type { ConfigActions } from "./useConfigActions";
+import type { SystemIntegration } from "./useSystemIntegration";
 
 type SettingsDraftUpdater = (current: SettingsDraft) => SettingsDraft;
 
 export function SettingsTab({
-  startWithWindowsEnabled,
-  isUpdatingStartWithWindows,
   settingsDraft,
   visibleBrowsers,
   theme,
-  settingsActionPanel,
-  isResettingConfig,
-  isStartingOnboarding,
-  registrationStatus,
-  isRegistering,
-  onUpdateStartWithWindows,
+  integration,
+  configActions,
   onUpdateSettingsDraft,
   onUpdateThemePreference,
-  onSetSettingsActionPanel,
-  onResetConfig,
-  onRerunOnboarding,
-  onOpenConfigFolder,
-  onOpenDefaultAppsSettings,
-  onRegisterBrowserIntegration,
-  onUnregisterBrowserIntegration,
-  onRefreshRegistrationStatus,
 }: {
-  startWithWindowsEnabled: boolean | null;
-  isUpdatingStartWithWindows: boolean;
   settingsDraft: SettingsDraft | null;
   visibleBrowsers: BrowserConfig[];
   theme: ThemePreference;
-  settingsActionPanel: SettingsActionPanel;
-  isResettingConfig: boolean;
-  isStartingOnboarding: boolean;
-  registrationStatus: BrowserRegistrationStatus | null;
-  isRegistering: boolean;
-  onUpdateStartWithWindows: (enabled: boolean) => void;
+  integration: SystemIntegration;
+  configActions: ConfigActions;
   onUpdateSettingsDraft: (updater: SettingsDraftUpdater) => void;
   onUpdateThemePreference: (theme: ThemePreference) => void;
-  onSetSettingsActionPanel: Dispatch<SetStateAction<SettingsActionPanel>>;
-  onResetConfig: () => void;
-  onRerunOnboarding: (resetFirst: boolean) => void;
-  onOpenConfigFolder: () => void;
-  onOpenDefaultAppsSettings: () => void;
-  onRegisterBrowserIntegration: () => void;
-  onUnregisterBrowserIntegration: () => void;
-  onRefreshRegistrationStatus: () => void;
 }) {
   const [isRegistrationHelpVisible, setIsRegistrationHelpVisible] =
     useState(false);
@@ -114,11 +80,11 @@ export function SettingsTab({
         <label className="toggle">
           <input
             type="checkbox"
-            checked={startWithWindowsEnabled ?? false}
+            checked={integration.startWithWindowsEnabled ?? false}
             onChange={(event) =>
-              onUpdateStartWithWindows(event.currentTarget.checked)
+              void integration.updateStartWithWindows(event.currentTarget.checked)
             }
-            disabled={isUpdatingStartWithWindows}
+            disabled={integration.isUpdatingStartWithWindows}
           />
           <span>Start with Windows</span>
         </label>
@@ -277,11 +243,11 @@ export function SettingsTab({
             type="button"
             className="secondary"
             onClick={() =>
-              onSetSettingsActionPanel((current) =>
+              configActions.setSettingsActionPanel((current) =>
                 current === "reset" ? "none" : "reset",
               )
             }
-            disabled={isResettingConfig || isStartingOnboarding}
+            disabled={configActions.isResettingConfig || configActions.isStartingOnboarding}
           >
             Reset config
           </button>
@@ -289,25 +255,25 @@ export function SettingsTab({
             type="button"
             className="secondary"
             onClick={() =>
-              onSetSettingsActionPanel((current) =>
+              configActions.setSettingsActionPanel((current) =>
                 current === "rerun-onboarding" ? "none" : "rerun-onboarding",
               )
             }
-            disabled={isResettingConfig || isStartingOnboarding}
+            disabled={configActions.isResettingConfig || configActions.isStartingOnboarding}
           >
             Rerun onboarding
           </button>
           <button
             type="button"
             className="secondary"
-            onClick={onOpenConfigFolder}
-            disabled={isResettingConfig || isStartingOnboarding}
+            onClick={() => void configActions.openConfigFolder()}
+            disabled={configActions.isResettingConfig || configActions.isStartingOnboarding}
           >
             Open config folder
           </button>
         </div>
 
-        {settingsActionPanel === "reset" ? (
+        {configActions.settingsActionPanel === "reset" ? (
           <div className="action-panel">
             <p className="setting-help">
               This removes your current routing rules and manual browsers and
@@ -316,16 +282,16 @@ export function SettingsTab({
             <div className="inline-actions">
               <button
                 type="button"
-                onClick={onResetConfig}
-                disabled={isResettingConfig}
+                onClick={() => void configActions.resetConfig()}
+                disabled={configActions.isResettingConfig}
               >
-                {isResettingConfig ? "Resetting..." : "Confirm reset"}
+                {configActions.isResettingConfig ? "Resetting..." : "Confirm reset"}
               </button>
               <button
                 type="button"
                 className="secondary"
-                onClick={() => onSetSettingsActionPanel("none")}
-                disabled={isResettingConfig}
+                onClick={() => configActions.setSettingsActionPanel("none")}
+                disabled={configActions.isResettingConfig}
               >
                 Cancel
               </button>
@@ -333,7 +299,7 @@ export function SettingsTab({
           </div>
         ) : null}
 
-        {settingsActionPanel === "rerun-onboarding" ? (
+        {configActions.settingsActionPanel === "rerun-onboarding" ? (
           <div className="action-panel">
             <p className="setting-help">
               Choose whether onboarding should reuse your current configuration
@@ -342,24 +308,24 @@ export function SettingsTab({
             <div className="inline-actions">
               <button
                 type="button"
-                onClick={() => onRerunOnboarding(false)}
-                disabled={isStartingOnboarding}
+                onClick={() => void configActions.rerunOnboarding(false)}
+                disabled={configActions.isStartingOnboarding}
               >
-                {isStartingOnboarding ? "Starting..." : "Keep current config"}
+                {configActions.isStartingOnboarding ? "Starting..." : "Keep current config"}
               </button>
               <button
                 type="button"
                 className="secondary"
-                onClick={() => onRerunOnboarding(true)}
-                disabled={isStartingOnboarding || isResettingConfig}
+                onClick={() => void configActions.rerunOnboarding(true)}
+                disabled={configActions.isStartingOnboarding || configActions.isResettingConfig}
               >
                 Reset first
               </button>
               <button
                 type="button"
                 className="secondary"
-                onClick={() => onSetSettingsActionPanel("none")}
-                disabled={isStartingOnboarding}
+                onClick={() => configActions.setSettingsActionPanel("none")}
+                disabled={configActions.isStartingOnboarding}
               >
                 Cancel
               </button>
@@ -370,26 +336,26 @@ export function SettingsTab({
 
       <article className="card">
         <h3>Windows Default App Registration</h3>
-        {registrationStatus ? (
+        {integration.registrationStatus ? (
           <>
             <p className="setting-help">
               Registered in Default Apps list:{" "}
-              <strong>{registrationStatus.registered ? "Yes" : "No"}</strong>
+              <strong>{integration.registrationStatus.registered ? "Yes" : "No"}</strong>
             </p>
             <p className="setting-help">
               Default for `http`:{" "}
-              <strong>{registrationStatus.isDefaultHttp ? "Yes" : "No"}</strong>
-              {registrationStatus.currentHttpProgId
-                ? ` (current: ${registrationStatus.currentHttpProgId})`
+              <strong>{integration.registrationStatus.isDefaultHttp ? "Yes" : "No"}</strong>
+              {integration.registrationStatus.currentHttpProgId
+                ? ` (current: ${integration.registrationStatus.currentHttpProgId})`
                 : ""}
             </p>
             <p className="setting-help">
               Default for `https`:{" "}
               <strong>
-                {registrationStatus.isDefaultHttps ? "Yes" : "No"}
+                {integration.registrationStatus.isDefaultHttps ? "Yes" : "No"}
               </strong>
-              {registrationStatus.currentHttpsProgId
-                ? ` (current: ${registrationStatus.currentHttpsProgId})`
+              {integration.registrationStatus.currentHttpsProgId
+                ? ` (current: ${integration.registrationStatus.currentHttpsProgId})`
                 : ""}
             </p>
           </>
@@ -404,30 +370,30 @@ export function SettingsTab({
           <button
             type="button"
             className="secondary"
-            onClick={onOpenDefaultAppsSettings}
+            onClick={() => void integration.openDefaultAppsSettings()}
           >
             Open Windows Default Apps
           </button>
           <button
             type="button"
-            onClick={onRegisterBrowserIntegration}
-            disabled={isRegistering}
+            onClick={() => void integration.registerBrowserIntegration()}
+            disabled={integration.isRegistering}
           >
             Register Hops
           </button>
           <button
             type="button"
             className="secondary"
-            onClick={onUnregisterBrowserIntegration}
-            disabled={isRegistering}
+            onClick={() => void integration.unregisterBrowserIntegration()}
+            disabled={integration.isRegistering}
           >
             Unregister Hops
           </button>
           <button
             type="button"
             className="secondary"
-            onClick={onRefreshRegistrationStatus}
-            disabled={isRegistering}
+            onClick={() => void integration.refreshRegistrationStatus()}
+            disabled={integration.isRegistering}
           >
             Refresh status
           </button>

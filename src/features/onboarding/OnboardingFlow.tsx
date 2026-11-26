@@ -1,55 +1,28 @@
-import type { Dispatch, ReactNode, SetStateAction } from "react";
+import type { ReactNode } from "react";
 import { BrowserIcon } from "../../components/common/BrowserIcon";
-import type { AppConfig, BrowserDraft, BrowserRegistrationStatus } from "../../types";
+import type { AppConfig } from "../../types";
+import type { BrowserManager } from "../browsers/useBrowserManager";
+import type { SystemIntegration } from "../settings/useSystemIntegration";
+import type { Onboarding } from "./useOnboarding";
 
 export function OnboardingFlow({
   statusBanner,
   config,
-  onboardingStep,
-  browserDraft,
-  isRefreshing,
-  isRegistering,
-  registrationStatus,
-  isCheckingOnboardingDefaults,
-  onboardingStartWithWindows,
-  isFinishingOnboarding,
-  onRefreshBrowsers,
-  onSetBrowserDraft,
-  onAddManualBrowser,
-  onSetOnboardingStep,
-  onRegisterBrowserIntegration,
-  onRefreshRegistrationStatus,
-  onOpenDefaultAppsSettings,
-  onContinueToFinish,
-  onSetOnboardingStartWithWindows,
-  onFinishOnboarding,
+  onboarding,
+  integration,
+  browsers,
 }: {
   statusBanner: ReactNode;
   config: AppConfig;
-  onboardingStep: number;
-  browserDraft: BrowserDraft;
-  isRefreshing: boolean;
-  isRegistering: boolean;
-  registrationStatus: BrowserRegistrationStatus | null;
-  isCheckingOnboardingDefaults: boolean;
-  onboardingStartWithWindows: boolean;
-  isFinishingOnboarding: boolean;
-  onRefreshBrowsers: () => void;
-  onSetBrowserDraft: Dispatch<SetStateAction<BrowserDraft>>;
-  onAddManualBrowser: () => void;
-  onSetOnboardingStep: (step: number) => void;
-  onRegisterBrowserIntegration: () => void;
-  onRefreshRegistrationStatus: () => void;
-  onOpenDefaultAppsSettings: () => void;
-  onContinueToFinish: () => void;
-  onSetOnboardingStartWithWindows: (enabled: boolean) => void;
-  onFinishOnboarding: () => void;
+  onboarding: Onboarding;
+  integration: SystemIntegration;
+  browsers: BrowserManager;
 }) {
   return (
     <>
       {statusBanner}
 
-      {onboardingStep === 0 ? (
+      {onboarding.step === 0 ? (
         <section className="tab-body">
           <h3>1. Detect your browsers</h3>
           <p className="setting-help">
@@ -61,10 +34,10 @@ export function OnboardingFlow({
             <button
               type="button"
               className="secondary"
-              onClick={onRefreshBrowsers}
-              disabled={isRefreshing}
+              onClick={() => void browsers.handleRefreshBrowsers()}
+              disabled={browsers.isRefreshing}
             >
-              {isRefreshing ? "Refreshing..." : "Refresh browsers"}
+              {browsers.isRefreshing ? "Refreshing..." : "Refresh browsers"}
             </button>
           </div>
 
@@ -99,10 +72,10 @@ export function OnboardingFlow({
             <label>
               Name
               <input
-                value={browserDraft.name}
+                value={browsers.browserDraft.name}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
-                  onSetBrowserDraft((current) => ({
+                  browsers.setBrowserDraft((current) => ({
                     ...current,
                     name: value,
                   }));
@@ -113,10 +86,10 @@ export function OnboardingFlow({
             <label>
               Executable path
               <input
-                value={browserDraft.path}
+                value={browsers.browserDraft.path}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
-                  onSetBrowserDraft((current) => ({
+                  browsers.setBrowserDraft((current) => ({
                     ...current,
                     path: value,
                   }));
@@ -127,10 +100,10 @@ export function OnboardingFlow({
             <label>
               Private mode flag
               <input
-                value={browserDraft.privateFlag}
+                value={browsers.browserDraft.privateFlag}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
-                  onSetBrowserDraft((current) => ({
+                  browsers.setBrowserDraft((current) => ({
                     ...current,
                     privateFlag: value,
                   }));
@@ -139,21 +112,21 @@ export function OnboardingFlow({
               />
             </label>
             <div className="inline-actions">
-              <button type="button" onClick={onAddManualBrowser}>
+              <button type="button" onClick={() => void browsers.addManualBrowser()}>
                 Add browser
               </button>
             </div>
           </article>
 
           <div className="inline-actions">
-            <button type="button" onClick={() => onSetOnboardingStep(1)}>
+            <button type="button" onClick={() => onboarding.setStep(1)}>
               Continue
             </button>
           </div>
         </section>
       ) : null}
 
-      {onboardingStep === 1 ? (
+      {onboarding.step === 1 ? (
         <section className="tab-body">
           <h3>2. Register Hops in Windows Default Apps</h3>
           <p className="setting-help">
@@ -164,16 +137,16 @@ export function OnboardingFlow({
           <div className="inline-actions">
             <button
               type="button"
-              onClick={onRegisterBrowserIntegration}
-              disabled={isRegistering}
+              onClick={() => void integration.registerBrowserIntegration()}
+              disabled={integration.isRegistering}
             >
               Register Hops
             </button>
             <button
               type="button"
               className="secondary"
-              onClick={onRefreshRegistrationStatus}
-              disabled={isRegistering}
+              onClick={() => void integration.refreshRegistrationStatus()}
+              disabled={integration.isRegistering}
             >
               Refresh status
             </button>
@@ -182,7 +155,7 @@ export function OnboardingFlow({
           <article className="card">
             <p>
               Registered in Default Apps list:{" "}
-              <strong>{registrationStatus?.registered ? "Yes" : "No"}</strong>
+              <strong>{integration.registrationStatus?.registered ? "Yes" : "No"}</strong>
             </p>
           </article>
 
@@ -190,14 +163,14 @@ export function OnboardingFlow({
             <button
               type="button"
               className="secondary"
-              onClick={() => onSetOnboardingStep(0)}
+              onClick={() => onboarding.setStep(0)}
             >
               Back
             </button>
             <button
               type="button"
-              onClick={() => onSetOnboardingStep(2)}
-              disabled={!registrationStatus?.registered}
+              onClick={() => onboarding.setStep(2)}
+              disabled={!integration.registrationStatus?.registered}
             >
               Continue
             </button>
@@ -205,7 +178,7 @@ export function OnboardingFlow({
         </section>
       ) : null}
 
-      {onboardingStep === 2 ? (
+      {onboarding.step === 2 ? (
         <section className="tab-body">
           <h3>3. Set Hops as default for HTTP and HTTPS</h3>
           <p className="setting-help">
@@ -217,14 +190,14 @@ export function OnboardingFlow({
             <button
               type="button"
               className="secondary"
-              onClick={onOpenDefaultAppsSettings}
+              onClick={() => void integration.openDefaultAppsSettings()}
             >
               Open Windows Default Apps
             </button>
             <button
               type="button"
               className="secondary"
-              onClick={onRefreshRegistrationStatus}
+              onClick={() => void integration.refreshRegistrationStatus()}
             >
               Refresh status
             </button>
@@ -234,13 +207,13 @@ export function OnboardingFlow({
             <p>
               HTTP default:{" "}
               <strong>
-                {registrationStatus?.isDefaultHttp ? "Hops" : "Not Hops"}
+                {integration.registrationStatus?.isDefaultHttp ? "Hops" : "Not Hops"}
               </strong>
             </p>
             <p>
               HTTPS default:{" "}
               <strong>
-                {registrationStatus?.isDefaultHttps ? "Hops" : "Not Hops"}
+                {integration.registrationStatus?.isDefaultHttps ? "Hops" : "Not Hops"}
               </strong>
             </p>
           </article>
@@ -249,22 +222,22 @@ export function OnboardingFlow({
             <button
               type="button"
               className="secondary"
-              onClick={() => onSetOnboardingStep(1)}
+              onClick={() => onboarding.setStep(1)}
             >
               Back
             </button>
             <button
               type="button"
-              onClick={onContinueToFinish}
-              disabled={isCheckingOnboardingDefaults}
+              onClick={() => void onboarding.continueToFinish()}
+              disabled={onboarding.isCheckingDefaults}
             >
-              {isCheckingOnboardingDefaults ? "Checking..." : "Continue"}
+              {onboarding.isCheckingDefaults ? "Checking..." : "Continue"}
             </button>
           </div>
         </section>
       ) : null}
 
-      {onboardingStep === 3 ? (
+      {onboarding.step === 3 ? (
         <section className="tab-body">
           <h3>4. Finish onboarding</h3>
           <p className="setting-help">
@@ -274,11 +247,11 @@ export function OnboardingFlow({
           <label className="toggle">
             <input
               type="checkbox"
-              checked={onboardingStartWithWindows}
+              checked={onboarding.startWithWindows}
               onChange={(event) =>
-                onSetOnboardingStartWithWindows(event.currentTarget.checked)
+                onboarding.setStartWithWindows(event.currentTarget.checked)
               }
-              disabled={isFinishingOnboarding}
+              disabled={onboarding.isFinishing}
             />
             <span>Start with Windows</span>
           </label>
@@ -286,7 +259,7 @@ export function OnboardingFlow({
             Launch Hops when you sign in. After setup, it starts hidden in the
             tray.
           </p>
-          {!registrationStatus?.isFullyDefault ? (
+          {!integration.registrationStatus?.isFullyDefault ? (
             <p className="status warning">
               Hops is not yet default for both HTTP and HTTPS. You can finish
               now and complete this later in Settings.
@@ -297,16 +270,16 @@ export function OnboardingFlow({
             <button
               type="button"
               className="secondary"
-              onClick={() => onSetOnboardingStep(2)}
+              onClick={() => onboarding.setStep(2)}
             >
               Back
             </button>
             <button
               type="button"
-              onClick={onFinishOnboarding}
-              disabled={isFinishingOnboarding}
+              onClick={() => void onboarding.finish()}
+              disabled={onboarding.isFinishing}
             >
-              {isFinishingOnboarding ? "Finishing..." : "Finish and open Hops"}
+              {onboarding.isFinishing ? "Finishing..." : "Finish and open Hops"}
             </button>
           </div>
         </section>

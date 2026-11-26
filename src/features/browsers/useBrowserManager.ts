@@ -634,3 +634,5 @@ export function useBrowserManager({
     resetBrowserEditState,
   };
 }
+
+export type BrowserManager = ReturnType<typeof useBrowserManager>;

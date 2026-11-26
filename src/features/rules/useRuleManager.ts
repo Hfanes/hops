@@ -267,3 +267,5 @@ export function useRuleManager({
     resetRuleEditState,
   };
 }
+
+export type RuleManager = ReturnType<typeof useRuleManager>;

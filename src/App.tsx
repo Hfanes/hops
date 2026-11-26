@@ -88,25 +88,13 @@ function App() {
     refreshAbout,
     updateApp,
   } = useAppUpdates({ activeTab, isLoading, setStatus });
-  const {
-    registrationStatus,
-    isRegistering,
-    startWithWindowsEnabled,
-    setStartWithWindowsEnabled,
-    isUpdatingStartWithWindows,
-    refreshRegistrationStatus,
-    refreshStartWithWindowsStatus,
-    updateStartWithWindows,
-    openDefaultAppsSettings,
-    registerBrowserIntegration,
-    unregisterBrowserIntegration,
-  } = useSystemIntegration({ setStatus });
+  const integration = useSystemIntegration({ setStatus });
   const onboarding = useOnboarding({
     config,
     applyLoadedConfig,
     setStatus,
-    setStartWithWindowsEnabled,
-    refreshRegistrationStatus,
+    setStartWithWindowsEnabled: integration.setStartWithWindowsEnabled,
+    refreshRegistrationStatus: integration.refreshRegistrationStatus,
     onFinished: () => setActiveTab("settings"),
   });
   const { runningBrowserIds, missingBrowserIds, refreshRunningState } =
@@ -115,27 +103,7 @@ function App() {
     isLoading,
     configRef,
   });
-  const {
-    isRefreshing,
-    pendingBrowserIds,
-    savingBrowserIds,
-    failedBrowserIds,
-    browserDraft,
-    setBrowserDraft,
-    manualBrowserConfirmation,
-    setManualBrowserConfirmation,
-    isConfirmingManualBrowser,
-    handleRefreshBrowsers,
-    updateBrowser,
-    flushBrowserSave,
-    toggleBrowserHidden,
-    requestDeleteManualBrowser,
-    deleteManualBrowser,
-    addManualBrowser,
-    confirmManualBrowser,
-    cancelPendingBrowserSaves,
-    resetBrowserEditState,
-  } = useBrowserManager({
+  const browsers = useBrowserManager({
     store: configStore,
     setStatus,
     setFormModal,
@@ -143,7 +111,10 @@ function App() {
     onRequestDelete: setDeleteConfirmation,
     refreshRunningState,
   });
-  useCloseGuard({ store: configStore, cancelPendingBrowserSaves });
+  useCloseGuard({
+    store: configStore,
+    cancelPendingBrowserSaves: browsers.cancelPendingBrowserSaves,
+  });
   const routeTester = useRouteTester({
     config,
     setStatus,
@@ -162,20 +133,7 @@ function App() {
     () => config?.browsers.filter((browser) => !browser.isHidden) ?? [],
     [config],
   );
-  const {
-    dirtyRuleIds,
-    savingRuleIds,
-    ruleDraft,
-    setRuleDraft,
-    regexErrors,
-    updateRule,
-    saveRule,
-    deleteRule,
-    requestDeleteRule,
-    moveRule,
-    addRule,
-    resetRuleEditState,
-  } = useRuleManager({
+  const rules = useRuleManager({
     store: configStore,
     visibleBrowsers,
     setStatus,
@@ -185,11 +143,11 @@ function App() {
   const configActions = useConfigActions({
     store: configStore,
     setStatus,
-    cancelPendingBrowserSaves,
+    cancelPendingBrowserSaves: browsers.cancelPendingBrowserSaves,
     refreshRunningState,
     onConfigReset: () => {
-      resetRuleEditState();
-      resetBrowserEditState();
+      rules.resetRuleEditState();
+      browsers.resetBrowserEditState();
       routeTester.clearRouteDecision();
     },
     onOnboardingRestarted: () => onboarding.setStep(0),
@@ -204,8 +162,8 @@ function App() {
   async function loadStartupDetails() {
     const [nextAboutInfo] = await Promise.all([
       getAppAboutInfo(),
-      refreshRegistrationStatus(),
-      refreshStartWithWindowsStatus(),
+      integration.refreshRegistrationStatus(),
+      integration.refreshStartWithWindowsStatus(),
     ]);
     return () => setAboutInfo(nextAboutInfo);
   }
@@ -222,11 +180,11 @@ function App() {
 
     setDeleteConfirmation(null);
     if (confirmation.kind === "manual-browser") {
-      deleteManualBrowser(confirmation.browserId);
+      browsers.deleteManualBrowser(confirmation.browserId);
       return;
     }
 
-    deleteRule(confirmation.ruleId);
+    rules.deleteRule(confirmation.ruleId);
   }
 
   function scrollCurrentPageToTop() {
@@ -265,29 +223,29 @@ function App() {
   const activeFormModal =
     formModal === "manual-browser" ? (
       <AddBrowserModal
-        browserDraft={browserDraft}
+        browserDraft={browsers.browserDraft}
         isSaving={isSaving}
-        onSetBrowserDraft={setBrowserDraft}
-        onAdd={() => void addManualBrowser()}
+        onSetBrowserDraft={browsers.setBrowserDraft}
+        onAdd={() => void browsers.addManualBrowser()}
         onClose={() => setFormModal(null)}
       />
     ) : formModal === "rule" ? (
       <AddRuleModal
-        ruleDraft={ruleDraft}
+        ruleDraft={rules.ruleDraft}
         visibleBrowsers={visibleBrowsers}
         isSaving={isSaving}
-        onSetRuleDraft={setRuleDraft}
-        onAdd={() => void addRule()}
+        onSetRuleDraft={rules.setRuleDraft}
+        onAdd={() => void rules.addRule()}
         onClose={() => setFormModal(null)}
       />
     ) : null;
 
-  const manualBrowserConfirmationModal = manualBrowserConfirmation ? (
+  const manualBrowserConfirmationModal = browsers.manualBrowserConfirmation ? (
     <ManualBrowserConfirmModal
-      confirmation={manualBrowserConfirmation}
-      isConfirming={isConfirmingManualBrowser}
-      onConfirm={() => void confirmManualBrowser()}
-      onClose={() => setManualBrowserConfirmation(null)}
+      confirmation={browsers.manualBrowserConfirmation}
+      isConfirming={browsers.isConfirmingManualBrowser}
+      onConfirm={() => void browsers.confirmManualBrowser()}
+      onClose={() => browsers.setManualBrowserConfirmation(null)}
     />
   ) : null;
 
@@ -339,28 +297,9 @@ function App() {
             <OnboardingFlow
               statusBanner={statusBanner}
               config={config}
-              onboardingStep={onboarding.step}
-              browserDraft={browserDraft}
-              isRefreshing={isRefreshing}
-              isRegistering={isRegistering}
-              registrationStatus={registrationStatus}
-              isCheckingOnboardingDefaults={onboarding.isCheckingDefaults}
-              onboardingStartWithWindows={onboarding.startWithWindows}
-              isFinishingOnboarding={onboarding.isFinishing}
-              onRefreshBrowsers={handleRefreshBrowsers}
-              onSetBrowserDraft={setBrowserDraft}
-              onAddManualBrowser={() => void addManualBrowser()}
-              onSetOnboardingStep={onboarding.setStep}
-              onRegisterBrowserIntegration={() =>
-                void registerBrowserIntegration()
-              }
-              onRefreshRegistrationStatus={() =>
-                void refreshRegistrationStatus()
-              }
-              onOpenDefaultAppsSettings={openDefaultAppsSettings}
-              onContinueToFinish={() => void onboarding.continueToFinish()}
-              onSetOnboardingStartWithWindows={onboarding.setStartWithWindows}
-              onFinishOnboarding={() => void onboarding.finish()}
+              onboarding={onboarding}
+              integration={integration}
+              browsers={browsers}
             />
           </div>
         </section>
@@ -386,10 +325,10 @@ function App() {
                     <button
                       type="button"
                       className="secondary"
-                      onClick={handleRefreshBrowsers}
-                      disabled={isRefreshing}
+                      onClick={browsers.handleRefreshBrowsers}
+                      disabled={browsers.isRefreshing}
                     >
-                      {isRefreshing ? "Refreshing..." : "Refresh browsers"}
+                      {browsers.isRefreshing ? "Refreshing..." : "Refresh browsers"}
                     </button>
                     <button
                       type="button"
@@ -423,37 +362,13 @@ function App() {
 
           {activeTab === "settings" ? (
             <SettingsTab
-              startWithWindowsEnabled={startWithWindowsEnabled}
-              isUpdatingStartWithWindows={isUpdatingStartWithWindows}
               settingsDraft={settingsDraft}
               visibleBrowsers={visibleBrowsers}
               theme={theme}
-              settingsActionPanel={configActions.settingsActionPanel}
-              isResettingConfig={configActions.isResettingConfig}
-              isStartingOnboarding={configActions.isStartingOnboarding}
-              registrationStatus={registrationStatus}
-              isRegistering={isRegistering}
-              onUpdateStartWithWindows={(enabled) =>
-                void updateStartWithWindows(enabled)
-              }
+              integration={integration}
+              configActions={configActions}
               onUpdateSettingsDraft={updateSettingsDraft}
               onUpdateThemePreference={updateThemePreference}
-              onSetSettingsActionPanel={configActions.setSettingsActionPanel}
-              onResetConfig={() => void configActions.resetConfig()}
-              onRerunOnboarding={(resetFirst) =>
-                void configActions.rerunOnboarding(resetFirst)
-              }
-              onOpenConfigFolder={() => void configActions.openConfigFolder()}
-              onOpenDefaultAppsSettings={openDefaultAppsSettings}
-              onRegisterBrowserIntegration={() =>
-                void registerBrowserIntegration()
-              }
-              onUnregisterBrowserIntegration={() =>
-                void unregisterBrowserIntegration()
-              }
-              onRefreshRegistrationStatus={() =>
-                void refreshRegistrationStatus()
-              }
             />
           ) : null}
 
@@ -462,13 +377,13 @@ function App() {
               browsers={config.browsers}
               runningBrowserIds={runningBrowserIds}
               missingBrowserIds={missingBrowserIds}
-              savingBrowserIds={savingBrowserIds}
-              pendingBrowserIds={pendingBrowserIds}
-              failedBrowserIds={failedBrowserIds}
-              onUpdateBrowser={updateBrowser}
-              onFlushBrowserSave={flushBrowserSave}
-              onToggleBrowserHidden={toggleBrowserHidden}
-              onDeleteManualBrowser={requestDeleteManualBrowser}
+              savingBrowserIds={browsers.savingBrowserIds}
+              pendingBrowserIds={browsers.pendingBrowserIds}
+              failedBrowserIds={browsers.failedBrowserIds}
+              onUpdateBrowser={browsers.updateBrowser}
+              onFlushBrowserSave={browsers.flushBrowserSave}
+              onToggleBrowserHidden={browsers.toggleBrowserHidden}
+              onDeleteManualBrowser={browsers.requestDeleteManualBrowser}
             />
           ) : null}
 
@@ -476,13 +391,13 @@ function App() {
             <RulesTab
               rules={config.rules}
               visibleBrowsers={visibleBrowsers}
-              regexErrors={regexErrors}
-              dirtyRuleIds={dirtyRuleIds}
-              savingRuleIds={savingRuleIds}
-              onMoveRule={moveRule}
-              onDeleteRule={requestDeleteRule}
-              onUpdateRule={updateRule}
-              onSaveRule={saveRule}
+              regexErrors={rules.regexErrors}
+              dirtyRuleIds={rules.dirtyRuleIds}
+              savingRuleIds={rules.savingRuleIds}
+              onMoveRule={rules.moveRule}
+              onDeleteRule={rules.requestDeleteRule}
+              onUpdateRule={rules.updateRule}
+              onSaveRule={rules.saveRule}
             />
           ) : null}
 

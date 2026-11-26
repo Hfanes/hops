@@ -147,3 +147,5 @@ export function useSystemIntegration({
     unregisterBrowserIntegration,
   };
 }
+
+export type SystemIntegration = ReturnType<typeof useSystemIntegration>;
