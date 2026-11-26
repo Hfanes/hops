@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "../../lib/errors";
 import type { DeleteConfirmation } from "../../components/common/DeleteConfirmModal";
 import type { ConfigStore } from "../../hooks/useConfigStore";
-import { cloneSet, createRuleId } from "../../lib/appTypes";
+import { useIdSet } from "../../hooks/useIdSet";
+import { createRuleId } from "../../lib/appTypes";
 import { validateRegexPatterns } from "../../services/tauri";
 import type {
   AppConfig,
@@ -37,8 +38,8 @@ export function useRuleManager({
   const { config, configRef, setCurrentConfig, applyConfigChange, persistConfig } =
     store;
 
-  const [dirtyRuleIds, setDirtyRuleIds] = useState<Set<string>>(new Set());
-  const [savingRuleIds, setSavingRuleIds] = useState<Set<string>>(new Set());
+  const dirtyRules = useIdSet();
+  const savingRules = useIdSet();
   const [ruleDraft, setRuleDraft] = useState<RuleDraft>({
     pattern: "",
     patternType: "hostname",
@@ -74,11 +75,7 @@ export function useRuleManager({
       return;
     }
 
-    setDirtyRuleIds((current) => {
-      const next = cloneSet(current);
-      next.add(ruleId);
-      return next;
-    });
+    dirtyRules.add(ruleId);
   }
 
   function saveRule(ruleId: string) {
@@ -110,33 +107,17 @@ export function useRuleManager({
       return;
     }
 
-    setSavingRuleIds((current) => {
-      const next = cloneSet(current);
-      next.add(ruleId);
-      return next;
-    });
+    savingRules.add(ruleId);
 
     void persistConfig(currentConfig, {
       successText: "Rule saved.",
       errorPrefix: "Could not save rule",
       onSuccess: () => {
-        setDirtyRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
-        setSavingRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
+        dirtyRules.remove(ruleId);
+        savingRules.remove(ruleId);
       },
       onError: () => {
-        setSavingRuleIds((current) => {
-          const next = cloneSet(current);
-          next.delete(ruleId);
-          return next;
-        });
+        savingRules.remove(ruleId);
       },
     });
   }
@@ -150,14 +131,7 @@ export function useRuleManager({
       return;
     }
 
-    setDirtyRuleIds((current) => {
-      if (!current.has(ruleId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(ruleId);
-      return next;
-    });
+    dirtyRules.remove(ruleId);
 
     void persistConfig(nextConfig, {
       successText: "Rule deleted.",
@@ -274,13 +248,13 @@ export function useRuleManager({
 
   /** Clears per-rule edit and save indicators, e.g. after a config reset. */
   function resetRuleEditState() {
-    setDirtyRuleIds(new Set());
-    setSavingRuleIds(new Set());
+    dirtyRules.clear();
+    savingRules.clear();
   }
 
   return {
-    dirtyRuleIds,
-    savingRuleIds,
+    dirtyRuleIds: dirtyRules.ids,
+    savingRuleIds: savingRules.ids,
     ruleDraft,
     setRuleDraft,
     regexErrors,

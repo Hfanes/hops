@@ -20,10 +20,6 @@ export function createBrowserId() {
   return `manual-${Date.now()}`;
 }
 
-export function cloneSet<T>(values: Set<T>) {
-  return new Set(values);
-}
-
 export function settingsDraftFromConfig(config: AppConfig): SettingsDraft {
   return {
     alwaysShowPicker: config.alwaysShowPicker,

@@ -3,7 +3,8 @@ import { errorMessage } from "../../lib/errors";
 import type { DeleteConfirmation } from "../../components/common/DeleteConfirmModal";
 import type { FeedbackMessage } from "../../components/common/FeedbackModal";
 import type { ConfigStore } from "../../hooks/useConfigStore";
-import { cloneSet, createBrowserId } from "../../lib/appTypes";
+import { useIdSet } from "../../hooks/useIdSet";
+import { createBrowserId } from "../../lib/appTypes";
 import { refreshBrowsers, validateManualBrowser } from "../../services/tauri";
 import type {
   AppConfig,
@@ -52,15 +53,9 @@ export function useBrowserManager({
   } = store;
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pendingBrowserIds, setPendingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [savingBrowserIds, setSavingBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [failedBrowserIds, setFailedBrowserIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const pendingBrowsers = useIdSet();
+  const savingBrowsers = useIdSet();
+  const failedBrowsers = useIdSet();
   const [browserDraft, setBrowserDraft] =
     useState<BrowserDraft>(EMPTY_BROWSER_DRAFT);
   const [manualBrowserConfirmation, setManualBrowserConfirmation] =
@@ -283,29 +278,14 @@ export function useBrowserManager({
       await persistConfig(configToSave, {
         errorPrefix: "Could not save browser changes",
         onSuccess: () => {
-          setFailedBrowserIds((current) => {
-            if (!current.has(browserId)) {
-              return current;
-            }
-            const next = cloneSet(current);
-            next.delete(browserId);
-            return next;
-          });
+          failedBrowsers.remove(browserId);
         },
         onError: () => {
-          setFailedBrowserIds((current) => {
-            const next = cloneSet(current);
-            next.add(browserId);
-            return next;
-          });
+          failedBrowsers.add(browserId);
         },
       });
     } finally {
-      setSavingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.delete(browserId);
-        return next;
-      });
+      savingBrowsers.remove(browserId);
     }
   }
 
@@ -315,32 +295,13 @@ export function useBrowserManager({
       window.clearTimeout(existingTimer);
     }
 
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
+    pendingBrowsers.add(browserId);
+    failedBrowsers.remove(browserId);
 
     browserSaveTimersRef.current[browserId] = window.setTimeout(() => {
       delete browserSaveTimersRef.current[browserId];
-      setPendingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.delete(browserId);
-        return next;
-      });
-      setSavingBrowserIds((current) => {
-        const next = cloneSet(current);
-        next.add(browserId);
-        return next;
-      });
+      pendingBrowsers.remove(browserId);
+      savingBrowsers.add(browserId);
 
       startBrowserSave(browserId, nextConfig);
     }, 500);
@@ -378,16 +339,8 @@ export function useBrowserManager({
 
     window.clearTimeout(existingTimer);
     delete browserSaveTimersRef.current[browserId];
-    setPendingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      const next = cloneSet(current);
-      next.add(browserId);
-      return next;
-    });
+    pendingBrowsers.remove(browserId);
+    savingBrowsers.add(browserId);
 
     startBrowserSave(browserId, latestConfig);
   }
@@ -503,30 +456,9 @@ export function useBrowserManager({
       return;
     }
 
-    setPendingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setSavingBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
-    setFailedBrowserIds((current) => {
-      if (!current.has(browserId)) {
-        return current;
-      }
-      const next = cloneSet(current);
-      next.delete(browserId);
-      return next;
-    });
+    pendingBrowsers.remove(browserId);
+    savingBrowsers.remove(browserId);
+    failedBrowsers.remove(browserId);
 
     void persistConfig(nextConfig, {
       successText: `Deleted manual browser "${browser.name}".`,
@@ -701,17 +633,17 @@ export function useBrowserManager({
 
   /** Clears per-browser save indicators and the add form, e.g. after a reset. */
   function resetBrowserEditState() {
-    setPendingBrowserIds(new Set());
-    setSavingBrowserIds(new Set());
-    setFailedBrowserIds(new Set());
+    pendingBrowsers.clear();
+    savingBrowsers.clear();
+    failedBrowsers.clear();
     setBrowserDraft(EMPTY_BROWSER_DRAFT);
   }
 
   return {
     isRefreshing,
-    pendingBrowserIds,
-    savingBrowserIds,
-    failedBrowserIds,
+    pendingBrowserIds: pendingBrowsers.ids,
+    savingBrowserIds: savingBrowsers.ids,
+    failedBrowserIds: failedBrowsers.ids,
     browserDraft,
     setBrowserDraft,
     manualBrowserConfirmation,
