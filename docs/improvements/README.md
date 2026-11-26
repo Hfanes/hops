@@ -70,7 +70,7 @@ the item's **Decisions** section.
 | 07 | [Rust refactor and performance](07-rust-refactor-performance.md)     | Implemented |
 | 08 | [Frontend refactor](08-frontend-refactor.md)                         | Implemented |
 | 09 | [Release build on tauri-action v1](09-tauri-action-v1.md)            | Proposed    |
-| 10 | [Rule names](10-rule-names.md)                                       | Proposed    |
+| 10 | [Rule names](10-rule-names.md)                                       | Implemented |
 
 ## Order
 

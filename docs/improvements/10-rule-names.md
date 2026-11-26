@@ -79,13 +79,23 @@ Loading only normalizes (`config.rs:264`, `config.rs:378`).
 
 ## Acceptance criteria
 
-- [ ] An existing config without rule names loads and saves without errors.
-- [ ] A rule can be named when it is created and renamed later.
-- [ ] A rule without a name shows the default label.
-- [ ] The backend trims names, stores blank ones as `None` and cuts them at
+- [x] An existing config without rule names loads and saves without errors.
+- [x] A rule can be named when it is created and renamed later.
+- [x] A rule without a name shows the default label.
+- [x] The backend trims names, stores blank ones as `None` and cuts them at
       60 characters.
-- [ ] `cargo test`, `cargo clippy -D warnings`, `cargo fmt --check` and
+- [x] `cargo test`, `cargo clippy -D warnings`, `cargo fmt --check` and
       `bun run build` pass.
+
+## Implementation notes
+
+- The TypeScript `MAX_RULE_NAME_LENGTH` mirrors `MAX_RULE_NAME_CHARS` in
+  `config.rs`. The input counts UTF-16 units, so it never lets through more
+  characters than the backend keeps.
+- Outside the original scope, done in the same branch because it touches the
+  same rule card: the pattern type is now a native `<select>`, styled like
+  the Target browser field, instead of a list of seven radio cards. The
+  info icon moved next to the label and explains the selected type.
 
 ## Verification
 
