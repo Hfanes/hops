@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { errorMessage } from "./lib/errors";
 import { FiPlus } from "react-icons/fi";
 import {
   getAppAboutInfo,
-  getConfigFilePath,
-  loadConfig,
-  takeConfigRecoveryNotice,
 } from "./services/tauri";
 import { LoadingState } from "./components/common/LoadingState";
 import {
@@ -41,6 +37,7 @@ import { useSystemIntegration } from "./features/settings/useSystemIntegration";
 import {
   EMPTY_STATUS,
 } from "./lib/appTypes";
+import { useAppBootstrap } from "./hooks/useAppBootstrap";
 import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useConfigStore } from "./hooks/useConfigStore";
 import { useDocumentTheme } from "./hooks/useDocumentTheme";
@@ -56,8 +53,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>("settings");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [status, setStatus] = useState<StatusState>(EMPTY_STATUS);
-  const [isLoading, setIsLoading] = useState(true);
-  const [configPath, setConfigPath] = useState<string | null>(null);
   const [formModal, setFormModal] = useState<FormModal>(null);
 
   const [feedbackModal, setFeedbackModal] = useState<FeedbackMessage | null>(
@@ -79,6 +74,11 @@ function App() {
     updateSettingsDraft,
     updateThemePreference,
   } = configStore;
+  const { isLoading, configPath } = useAppBootstrap({
+    applyLoadedConfig,
+    setStatus,
+    loadStartupDetails,
+  });
   const {
     aboutInfo,
     setAboutInfo,
@@ -158,38 +158,6 @@ function App() {
   useDocumentTheme(theme);
   useSidebarShortcut(toggleSidebar);
 
-  useEffect(() => {
-    const bootstrap = async () => {
-      setIsLoading(true);
-      try {
-        const loaded = await loadConfig();
-        applyLoadedConfig(loaded);
-        const recoveryNotice = await takeConfigRecoveryNotice();
-        setStatus(
-          recoveryNotice
-            ? { kind: "warning", text: recoveryNotice }
-            : { kind: "success", text: "Configuration loaded." },
-        );
-
-        const [loadedConfigPath, nextAboutInfo] = await Promise.all([
-          getConfigFilePath(),
-          getAppAboutInfo(),
-          refreshRegistrationStatus(),
-          refreshStartWithWindowsStatus(),
-        ]);
-        setConfigPath(loadedConfigPath);
-        setAboutInfo(nextAboutInfo);
-      } catch (error) {
-        const message = errorMessage(error);
-        setStatus({ kind: "error", text: `Failed to load config: ${message}` });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void bootstrap();
-  }, []);
-
   const visibleBrowsers = useMemo(
     () => config?.browsers.filter((browser) => !browser.isHidden) ?? [],
     [config],
@@ -230,6 +198,17 @@ function App() {
   useEffect(() => {
     setFormModal(null);
   }, [activeTab]);
+
+  // Declared as a function so useAppBootstrap, which runs before the hooks it
+  // uses, can take it. It is only called from the bootstrap effect.
+  async function loadStartupDetails() {
+    const [nextAboutInfo] = await Promise.all([
+      getAppAboutInfo(),
+      refreshRegistrationStatus(),
+      refreshStartWithWindowsStatus(),
+    ]);
+    return () => setAboutInfo(nextAboutInfo);
+  }
 
   function showFeedbackModal(options: FeedbackMessage) {
     setFeedbackModal(options);
