@@ -337,43 +337,27 @@ fn store_picker_session(state: &PickerState, session: PickerSession) -> Result<(
     Ok(())
 }
 
-fn build_picker_session(
-    config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
-) -> Result<PickerSession, String> {
-    let mut running = current_running_processes(&config.browsers);
-    build_picker_session_with_running_processes(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-        &mut running,
-        &browser_executable_exists,
-    )
+/// What a picker is shown for: the link, where the request came from, why
+/// the picker is needed, and which browser and mode to preselect.
+pub(crate) struct PickerRequest<'a> {
+    pub(crate) url: &'a str,
+    pub(crate) source: PickerLaunchSource,
+    pub(crate) reason: RouteReason,
+    pub(crate) preferred_browser_id: Option<&'a str>,
+    pub(crate) preferred_private_mode: bool,
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
-fn build_picker_session_with_running_processes<F>(
+fn build_picker_session<F>(
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
     running: &mut RunningProcessSnapshot<F>,
     is_installed: &dyn Fn(&BrowserConfig) -> bool,
 ) -> Result<PickerSession, String>
 where
     F: FnMut() -> std::collections::HashSet<String>,
 {
-    let normalized_url = normalize_http_url(url)?.to_string();
+    let normalized_url = normalize_http_url(request.url)?.to_string();
+    let preferred_browser_id = request.preferred_browser_id;
 
     // Uninstalled browsers are left out: picking one could only fail.
     let mut browsers: Vec<PickerBrowserEntry> = config
@@ -399,10 +383,10 @@ where
 
     Ok(PickerSession {
         url: normalized_url,
-        reason,
-        source,
+        reason: request.reason,
+        source: request.source,
         preferred_browser_id: preferred_browser_id.map(str::to_string),
-        preferred_private_mode,
+        preferred_private_mode: request.preferred_private_mode,
         disable_transparency: config.disable_transparency,
         theme_preference: config.theme_preference,
         always_show_picker: config.always_show_picker,
@@ -460,42 +444,21 @@ where
     resolve_route_with_running_processes(config, url, running)
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_picker_window(
     app: &AppHandle,
     state: &PickerState,
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
 ) -> Result<(), String> {
-    cancel_picker_idle_destroy(state)?;
-
-    let session = build_picker_session(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-    )?;
-    show_picker_window_with_session(app, state, session)
+    let mut running = current_running_processes(&config.browsers);
+    show_picker_window_with_running_processes(app, state, config, request, &mut running)
 }
 
-// Splitting these arguments into a struct is part of item 07.
-#[allow(clippy::too_many_arguments)]
 fn show_picker_window_with_running_processes<F>(
     app: &AppHandle,
     state: &PickerState,
     config: &AppConfig,
-    url: &str,
-    source: PickerLaunchSource,
-    reason: RouteReason,
-    preferred_browser_id: Option<&str>,
-    preferred_private_mode: bool,
+    request: PickerRequest<'_>,
     running: &mut RunningProcessSnapshot<F>,
 ) -> Result<(), String>
 where
@@ -503,16 +466,7 @@ where
 {
     cancel_picker_idle_destroy(state)?;
 
-    let session = build_picker_session_with_running_processes(
-        config,
-        url,
-        source,
-        reason,
-        preferred_browser_id,
-        preferred_private_mode,
-        running,
-        &browser_executable_exists,
-    )?;
+    let session = build_picker_session(config, request, running, &browser_executable_exists)?;
     show_picker_window_with_session(app, state, session)
 }
 
@@ -603,16 +557,14 @@ fn launch_failed_picker_session<F>(
 where
     F: FnMut() -> std::collections::HashSet<String>,
 {
-    let mut session = build_picker_session_with_running_processes(
-        config,
+    let request = PickerRequest {
         url,
-        PickerLaunchSource::Route,
-        RouteReason::BrowserLaunchFailed,
-        None,
-        private_mode,
-        running,
-        is_installed,
-    )?;
+        source: PickerLaunchSource::Route,
+        reason: RouteReason::BrowserLaunchFailed,
+        preferred_browser_id: None,
+        preferred_private_mode: private_mode,
+    };
+    let mut session = build_picker_session(config, request, running, is_installed)?;
     session.notice = Some(format!("{error} {LAUNCH_FAILED_HINT}"));
     Ok(session)
 }
@@ -636,21 +588,6 @@ pub(crate) fn handle_incoming_url(
         &mut running,
     )?;
 
-    if decision.action == RouteAction::ShowPicker && decision.reason == RouteReason::CtrlShiftClick
-    {
-        show_picker_window(
-            app,
-            state,
-            &config,
-            url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
-        )?;
-        return Ok(decision);
-    }
-
     if decision.action == RouteAction::OpenBrowser {
         hide_picker_window_internal(app, state)?;
         if let Some(browser_id) = decision.browser_id.as_deref() {
@@ -673,17 +610,17 @@ pub(crate) fn handle_incoming_url(
             }
         }
     } else {
-        show_picker_window_with_running_processes(
-            app,
-            state,
-            &config,
+        // A Ctrl+Shift click lands here too: with `force_picker` the route
+        // decision never loads the running snapshot, so the picker scans
+        // at most once either way.
+        let request = PickerRequest {
             url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
-            &mut running,
-        )?;
+            source: PickerLaunchSource::Route,
+            reason: decision.reason,
+            preferred_browser_id: decision.browser_id.as_deref(),
+            preferred_private_mode: decision.private_mode,
+        };
+        show_picker_window_with_running_processes(app, state, &config, request, &mut running)?;
     }
 
     Ok(decision)
@@ -773,13 +710,15 @@ mod tests {
     where
         F: FnMut() -> HashSet<String>,
     {
-        build_picker_session_with_running_processes(
+        build_picker_session(
             config,
-            url,
-            PickerLaunchSource::Route,
-            decision.reason,
-            decision.browser_id.as_deref(),
-            decision.private_mode,
+            PickerRequest {
+                url,
+                source: PickerLaunchSource::Route,
+                reason: decision.reason,
+                preferred_browser_id: decision.browser_id.as_deref(),
+                preferred_private_mode: decision.private_mode,
+            },
             running,
             &|_| true,
         )
@@ -1008,13 +947,15 @@ mod tests {
         config.default_browser_id = Some(default.id.clone());
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Route,
-            RouteReason::NoMatch,
-            Some(preferred.id.as_str()),
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Route,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: Some(preferred.id.as_str()),
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1041,13 +982,15 @@ mod tests {
         config.default_browser_id = Some(default.id.clone());
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1073,13 +1016,15 @@ mod tests {
         ]);
         let mut running = running_snapshot(HashSet::from([running_browser.path.clone()]));
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1102,13 +1047,15 @@ mod tests {
         ]);
         let mut running = running_snapshot(HashSet::new());
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Manual,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Manual,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|_| true,
         )
@@ -1129,13 +1076,15 @@ mod tests {
         let config = test_app_config(vec![installed.clone(), missing.clone()]);
         let mut running = running_snapshot(HashSet::new());
 
-        let session = build_picker_session_with_running_processes(
+        let session = build_picker_session(
             &config,
-            "https://example.com",
-            PickerLaunchSource::Route,
-            RouteReason::NoMatch,
-            None,
-            false,
+            PickerRequest {
+                url: "https://example.com",
+                source: PickerLaunchSource::Route,
+                reason: RouteReason::NoMatch,
+                preferred_browser_id: None,
+                preferred_private_mode: false,
+            },
             &mut running,
             &|browser| browser.id != missing.id,
         )

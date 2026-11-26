@@ -13,7 +13,8 @@ use crate::models::{
     RouteDecision, RouteReason,
 };
 use crate::picker::{
-    hide_picker_window_internal, show_picker_window, show_settings_window, PickerState,
+    hide_picker_window_internal, show_picker_window, show_settings_window, PickerRequest,
+    PickerState,
 };
 use crate::registration::{
     browser_registration_status, open_windows_default_apps as open_windows_default_apps_internal,
@@ -212,16 +213,14 @@ pub(crate) fn show_picker_for_url(
     preferred_private_mode: Option<bool>,
 ) -> Result<(), String> {
     let config = load_or_init_config(&app, false)?;
-    show_picker_window(
-        &app,
-        &state,
-        &config,
-        &url,
-        PickerLaunchSource::Manual,
-        RouteReason::ManualOpen,
-        preferred_browser_id.as_deref(),
-        preferred_private_mode.unwrap_or(false),
-    )
+    let request = PickerRequest {
+        url: &url,
+        source: PickerLaunchSource::Manual,
+        reason: RouteReason::ManualOpen,
+        preferred_browser_id: preferred_browser_id.as_deref(),
+        preferred_private_mode: preferred_private_mode.unwrap_or(false),
+    };
+    show_picker_window(&app, &state, &config, request)
 }
 
 #[tauri::command]
